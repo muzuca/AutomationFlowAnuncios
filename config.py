@@ -1,5 +1,5 @@
 # arquivo: config.py
-# descricao: carrega o ambiente do projeto, expõe as configurações globais e reúne os dados das contas HUMBLE sincronizadas para que o restante da automação trabalhe com uma fonte única e consistente de parâmetros.
+# descricao: carrega o ambiente do projeto, centraliza caminhos e parâmetros globais, e expõe as contas HUMBLE sincronizadas para que a automação use uma fonte única e consistente de configuração.
 from __future__ import annotations
 
 import os
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / '.env'
@@ -22,7 +23,7 @@ class GoogleAccount:
 class Settings:
     base_dir: Path
     env_path: Path
-    videos_base_dir: str
+    products_base_dir: str
     downloads_dir: str
     ffmpeg_path: str
     gemini_url: str
@@ -53,16 +54,25 @@ def _get_bool(name: str, default: bool = False) -> bool:
 
 def _load_accounts(max_accounts: int = 30) -> list[GoogleAccount]:
     accounts: list[GoogleAccount] = []
+
     for i in range(1, max_accounts + 1):
         email = os.getenv(f'HUMBLE_EMAIL_{i}')
         password = os.getenv(f'HUMBLE_PASSWORD_{i}')
+
         if email and password:
-            accounts.append(GoogleAccount(email=email.strip(), password=password.strip()))
+            accounts.append(
+                GoogleAccount(
+                    email=email.strip(),
+                    password=password.strip(),
+                )
+            )
+
     if not accounts:
         raise RuntimeError(
             'Nenhuma conta HUMBLE encontrada no .env. '
             'Execute a sincronização do acesso_humble.py antes de carregar as configurações.'
         )
+
     return accounts
 
 
@@ -73,7 +83,7 @@ def get_settings(reload: bool = True) -> Settings:
     return Settings(
         base_dir=BASE_DIR,
         env_path=ENV_PATH,
-        videos_base_dir=_get_env('VIDEOS_BASE_DIR', required=True),
+        products_base_dir=_get_env('PRODUCTS_BASE_DIR', required=True),
         downloads_dir=_get_env('DOWNLOADS_DIR', required=True),
         ffmpeg_path=_get_env('FFMPEG_PATH', default='ffmpeg.exe'),
         gemini_url=_get_env('GEMINI_URL', default='https://gemini.google.com/app'),
