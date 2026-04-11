@@ -1,5 +1,5 @@
 # arquivo: main.py
-# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, cria o navegador, seleciona a conta principal, executa login no Google, fecha popups nativos do Chrome, abre o Gemini, prepara a primeira tarefa pendente e valida a primeira imagem candidata de produto.
+# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, cria o navegador, seleciona a conta principal, executa login no Google, fecha popups nativos do Chrome, abre o Gemini, prepara a primeira tarefa pendente, valida a primeira imagem candidata de produto e gera a imagem POV com a IA.
 from __future__ import annotations
 
 import logging
@@ -127,6 +127,21 @@ def main() -> None:
 
         if validada:
             log_success(f'Imagem aprovada como produto principal: {primeira_imagem.name}')
+            
+            # --- ETAPA 11 ---
+            log_step('ETAPA 11: gerando imagem POV com duas maos')
+            caminho_pov = gemini.executar_fluxo_imagem_pov(
+                tarefa=prepared.task,
+                foto_produto_escolhida=primeira_imagem,
+                max_tentativas=3,
+            )
+            
+            if caminho_pov:
+                log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
+            else:
+                log_error('Nao foi possivel gerar uma imagem POV valida')
+            # ----------------
+                
         else:
             log_error(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
 
