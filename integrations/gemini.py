@@ -1,7 +1,7 @@
 # arquivo: integrations/gemini.py
 # descricao: fachada GeminiAnunciosViaFlow blindada para validacao de imagem,
 # geracao POV e criacao de roteiro de 3 cenas.
-# Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s), SCROLL NUCLEAR e SENSOR DE MICROFONE.
+# Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s), SCROLL NUCLEAR e SENSOR DE MICROFONE..
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 # arquivo: main.py
-# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, cria o navegador, seleciona a conta principal, executa login no Google, fecha popups nativos do Chrome, abre o Gemini, prepara a primeira tarefa pendente, valida a primeira imagem candidata de produto e gera a imagem POV com a IA.
+# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, cria o navegador, seleciona a conta principal, executa login no Google, fecha popups nativos do Chrome, abre o Gemini, prepara a primeira tarefa pendente, valida a primeira imagem candidata de produto e gera a imagem POV com a IA..
 from __future__ import annotations
 
 import logging
