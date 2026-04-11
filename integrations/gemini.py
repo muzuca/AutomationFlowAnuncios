@@ -1,7 +1,7 @@
 # arquivo: integrations/gemini.py
 # descricao: fachada GeminiAnunciosViaFlow blindada para validacao de imagem,
 # geracao POV e criacao de roteiro de 3 cenas.
-# Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s), SCROLL NUCLEAR e SENSOR DE MICROFONE..
+# Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s) e AUTO-F5 EM ERROS DA UI.
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 EXTENSOES_IMAGEM = ('.jpg', '.jpeg', '.png', '.webp')
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Templates de Roteirização
+# Templates de Roteirização (MANTIDOS ORIGINAIS E BONITOS)
 # ──────────────────────────────────────────────────────────────────────────────
 
 _TEMPLATE_TREINO_MESTRE = """
@@ -117,7 +117,6 @@ class GeminiAnunciosViaFlow:
                     break
                     
             if not clicou:
-                _log('Aviso: Botão de Novo Chat não encontrado. Forçando URL.')
                 self.driver.get('https://gemini.google.com/app')
                 
             fim = time.time() + 10
@@ -139,7 +138,7 @@ class GeminiAnunciosViaFlow:
         self.driver.execute_script('arguments[0].click();', element)
 
     def _scroll_chat_ate_fim(self) -> None:
-        """Scroll Nuclear: Desce tudo que pode rolar na página, forçando sempre pra baixo."""
+        """Scroll Nuclear: Desce tudo que pode rolar na página."""
         try:
             self.driver.execute_script(
                 """
@@ -241,18 +240,47 @@ class GeminiAnunciosViaFlow:
                 pass
         return None
 
-    def _aguardar_upload_estabilizar(self, timeout: int = 20) -> None:
+    def _aguardar_upload_estabilizar(self, timeout: int = 20, is_video: bool = False) -> None:
+        """Dupla estratégia: rápida para imagens, minuciosa para vídeos."""
         fim = time.time() + timeout
-        while time.time() < fim:
-            try:
-                self._scroll_chat_ate_fim()
-                btn = self._obter_botao_enviar()
-                if btn is not None:
-                    _log('Botão de envio habilitado apos upload.')
-                    return
-            except Exception:
-                pass
-            time.sleep(0.1)
+        
+        if is_video:
+            _log(f'Aguardando estabilização do upload de VÍDEO (max {timeout}s)...')
+            while time.time() < fim:
+                try:
+                    self._scroll_chat_ate_fim()
+                    carregando = False
+                    try:
+                        # --- SELETORES ATUALIZADOS PARA O LOADER DE VÍDEO ---
+                        loaders = self.driver.find_elements(By.CSS_SELECTOR, 'mat-progress-bar, .uploading, [role="progressbar"], mat-spinner, .loading-spinner, [aria-label*="loading"], [aria-label*="uploading"]')
+                        if loaders and any(l.is_displayed() for l in loaders):
+                            carregando = True
+                    except Exception:
+                        pass
+                    
+                    if not carregando:
+                        btn = self._obter_botao_enviar()
+                        if btn is not None:
+                            # --- PAUSA EXTRA APENAS PARA VÍDEO (Garante que a UI atualizou) ---
+                            time.sleep(2.0)
+                            _log('Upload de vídeo estabilizado e botão de envio habilitado.')
+                            return
+                except Exception:
+                    pass
+                time.sleep(1.0)
+        else:
+            # Lógica ORIGINAL e rápida para imagens
+            while time.time() < fim:
+                try:
+                    self._scroll_chat_ate_fim()
+                    btn = self._obter_botao_enviar()
+                    if btn is not None:
+                        _log('Botão de envio habilitado apos upload.')
+                        return
+                except Exception:
+                    pass
+                time.sleep(0.1)
+                
         _log('Aviso: upload nao confirmou estado pronto dentro do tempo esperado.')
 
     def _texto_limpo(self, txt: str) -> str:
@@ -278,22 +306,17 @@ class GeminiAnunciosViaFlow:
         return False
 
     def _gemini_esta_processando(self) -> bool:
-        """
-        Sensor definitivo de estado do Gemini.
-        Se o botão de microfone (speech_dictation_mic_button) sumiu da interface,
-        significa que o modelo está a gerar texto/imagem e bloqueou o input.
-        """
+        """Sensor de Microfone."""
         try:
             mics = self.driver.find_elements(By.CSS_SELECTOR, 'button.speech_dictation_mic_button, button[aria-label="Microphone"]')
-            # Se a lista estiver vazia ou nenhum estiver visível, está processando.
             if not mics:
                 return True
             for mic in mics:
                 if mic.is_displayed():
-                    return False # Microfone na tela = Gemini Idle (livre)
+                    return False
             return True
         except StaleElementReferenceException:
-            return True # DOM mudou, está processando
+            return True
         except Exception:
             return False
 
@@ -486,7 +509,17 @@ class GeminiAnunciosViaFlow:
             _log(f'Upload iniciado para: {caminho.name}')
             
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-            self._aguardar_upload_estabilizar()
+            
+            # --- SEPARAÇÃO DE LÓGICA: IMAGEM VS VÍDEO ---
+            is_video = caminho.suffix.lower() in ['.mov', '.mp4', '.avi', '.mkv', '.webm']
+            
+            # --- PAUSA CRUCIAL DE CHOQUE DE REALIDADE (Só para vídeos) ---
+            if is_video:
+                time.sleep(3.0) 
+
+            timeout_upload = 180 if is_video else 20
+            self._aguardar_upload_estabilizar(timeout=timeout_upload, is_video=is_video)
+            
         except TimeoutException as e:
             _log(f'ERRO: Timeout ao anexar {caminho.name}: {e}')
             raise
@@ -510,9 +543,6 @@ class GeminiAnunciosViaFlow:
             textarea.send_keys(prompt)
             _log('Prompt digitado')
             
-            # --- PAUSA DE SEGURANÇA PARA ESTABILIZAÇÃO ---
-            time.sleep(2.0)
-            
             self._scroll_chat_ate_fim()
             
             botao_submit = None
@@ -528,10 +558,15 @@ class GeminiAnunciosViaFlow:
             if botao_submit is None:
                 raise TimeoutException('Botao de envio nao ficou disponivel.')
             
-            self._js_click(botao_submit)
+            try:
+                botao_submit.click()
+            except Exception:
+                self._js_click(botao_submit)
+                
             _log('Prompt submetido')
             
-            fim_erro = time.time() + 3
+            # --- BLINDAGEM CONTRA O ERRO 13 ("SOMETHING WENT WRONG") ---
+            fim_erro = time.time() + 4
             while time.time() < fim_erro:
                 try:
                     retry_btns = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Retry') or contains(text(), 'Tentar novamente')]/ancestor::button")
@@ -539,11 +574,23 @@ class GeminiAnunciosViaFlow:
                         _log("⚠️ Erro de servidor detectado. Clicando em Retry...")
                         self._js_click(retry_btns[0])
                         break
+                    
+                    toasts = self.driver.find_elements(By.CSS_SELECTOR, "simple-snack-bar, snack-bar-container, div[class*='snackbar'], div[class*='toast'], [role='alert']")
+                    if toasts:
+                        for toast in toasts:
+                            if toast.is_displayed():
+                                t_text = toast.text.lower()
+                                if "wrong" in t_text or "errado" in t_text or "error" in t_text or "tente" in t_text or "try again" in t_text:
+                                    _log(f"⚠️ Erro na UI detectado ('{t_text[:30]}...'). Dando F5 e abortando...")
+                                    self.driver.refresh()
+                                    time.sleep(3)
+                                    return 'ERRO_F5'
+
                     if self._gemini_esta_processando() or self._obter_botao_enviar() is None:
                         break
                 except Exception:
                     pass
-                time.sleep(0.1)
+                time.sleep(0.2)
             
             self._scroll_chat_ate_fim()
             
@@ -736,7 +783,7 @@ class GeminiAnunciosViaFlow:
             if tentativa > 1:
                 _log(f'Reenviando prompt da imagem {caminho_imagem.name} (tentativa {tentativa})')
             resposta = self.enviar_prompt(prompt_validacao_produto, timeout=timeout_resposta).strip().upper()
-            if resposta in ('TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL'):
+            if resposta in ('TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'):
                 if tentativa <= max_reenvios_prompt:
                     self.abrir_novo_chat_limpo()
                     continue
@@ -802,7 +849,11 @@ class GeminiAnunciosViaFlow:
             )
 
             total_imagens_antes = self.contar_imagens_geradas()
-            self.enviar_prompt(prompt_geracao, aguardar_resposta=False)
+            status_envio = self.enviar_prompt(prompt_geracao, aguardar_resposta=False)
+
+            if status_envio == 'ERRO_F5':
+                _log('Aviso: Abortando espera e recomeçando tentativa devido ao F5 de emergência.')
+                continue
 
             if not self.aguardar_nova_imagem(total_antes=total_imagens_antes, timeout=180):
                 continue
@@ -827,19 +878,17 @@ class GeminiAnunciosViaFlow:
             for tentativa_val in range(1, 4):
                 self._scroll_chat_ate_fim()
                 
-                # --- LÓGICA DE CONTRA-PROVA COM PROMPT LINEARIZADO ---
                 if tentativa_val > 1:
                     prompt_validacao = "Não entendi ou houve um erro. Por favor, analise cuidadosamente a imagem anexada acima. Se ela mostrar mãos humanas segurando o produto em primeira pessoa (POV), responda SIM. Caso contrário, NAO. Responda apenas SIM ou NAO."
                 else:
-                    # PROMPT LINEARIZADO (Sem \n internos) para evitar reset do editor
                     prompt_validacao = (
                         "Você é um avaliador de anúncios, NÃO um fotógrafo perfeccionista. "
                         "Analise esta imagem publicitária anexada e responda apenas com 'SIM' ou 'NAO'. "
                         "Responda 'SIM' se TODAS as condições forem verdadeiras: "
-                        "Existe um produto físico visível em destaque na imagem; "
-                        "Existem mãos humanas visíveis segurando ou interagindo com o produto; "
-                        "A cena transmite claramente um efeito POV ou próxima de primeira pessoa; "
-                        "A imagem tem qualidade aceitável para uso em anúncio de redes sociais. "
+                        "- Existe um produto físico visível em destaque na imagem. "
+                        "- Existem mãos humanas visíveis segurando ou interagindo com o produto. "
+                        "- A cena transmite claramente um efeito POV ou próxima de primeira pessoa. "
+                        "- A imagem tem qualidade aceitável para uso em anúncio de redes sociais. "
                         "Responda 'NAO' apenas se NÃO houver mãos, ou NÃO houver produto visível, "
                         "ou se a imagem estiver confusa demais para uso publicitário. "
                         "Não use critérios extremamente rígidos; seja tolerante se o conceito geral estiver correto."
@@ -847,7 +896,7 @@ class GeminiAnunciosViaFlow:
 
                 veredito = self.enviar_prompt(prompt_validacao, timeout=60, aguardar_resposta=True).strip().upper()
                 
-                if not veredito or veredito in {'ENVIADO', 'TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL'}:
+                if not veredito or veredito in {'ENVIADO', 'TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
                     veredito = self._aguardar_resposta_textual(timeout=60).strip().upper()
 
                 resultado_final = self._interpretar_resposta_binaria(veredito)
@@ -858,7 +907,7 @@ class GeminiAnunciosViaFlow:
 
                 if resultado_final is False:
                     if tentativa_val == 1:
-                        _log(f'⚠️ Recebi um NAO. Contra-prova no mesmo chat...')
+                        _log(f'⚠️ Recebi um NAO. Vou pedir uma reavaliação no mesmo chat antes de descartar...')
                         continue
                     else:
                         _log(f'❌ Imagem POV reprovada após reavaliação. Motivo: {veredito[:120]}')
@@ -893,7 +942,11 @@ class GeminiAnunciosViaFlow:
         self.abrir_novo_chat_limpo()
         
         _log("Enviando Prompt Mestre de Treinamento...")
-        self.enviar_prompt(_TEMPLATE_TREINO_MESTRE, timeout=60, aguardar_resposta=True)
+        prompt_mestre_linear = " ".join(_TEMPLATE_TREINO_MESTRE.split())
+        
+        res_treino = self.enviar_prompt(prompt_mestre_linear, timeout=60, aguardar_resposta=True)
+        if res_treino == 'ERRO_F5':
+             _log("Aviso: Erro de F5 no treinamento. Pode impactar o fluxo final.")
         
         for arq in arquivos:
             caminho = Path(arq)
@@ -909,7 +962,9 @@ class GeminiAnunciosViaFlow:
             beneficios=beneficios
         )
         
+        prompt_execucao_linear = " ".join(prompt_execucao.split())
+        
         _log("Solicitando geração do roteiro em 3 cenas...")
-        resposta = self.enviar_prompt(prompt_execucao, timeout=90, aguardar_resposta=True)
+        resposta = self.enviar_prompt(prompt_execucao_linear, timeout=90, aguardar_resposta=True)
         
         return resposta

@@ -51,6 +51,9 @@ class AdTask:
     generated_ad_validated: bool = False
     product_name: str | None = None
     product_price: str | None = None
+    
+    # Campo adicionado para suportar metadados do roteiro (Etapa 12)
+    dados_anuncio: dict = field(default_factory=dict)
 
     @property
     def ordered_assets(self) -> list[TaskAsset]:

@@ -16,7 +16,8 @@ def _detect_role_by_position(index: int) -> str:
 
 
 def _parse_task_assets(task: AdTask) -> AdTask:
-    files = [item for item in task.folder_path.iterdir() if item.is_file()]
+    # Filtra arquivos, ignorando o arquivo de roteiro caso ele já exista de uma execução parcial
+    files = [item for item in task.folder_path.iterdir() if item.is_file() and item.name != "ROTEIRO_GERADO.txt"]
     files.sort(key=lambda item: item.stat().st_mtime)
 
     assets: list[TaskAsset] = []
@@ -62,6 +63,17 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
                 if not task_dir.name.isdigit():
                     continue
 
+                # AJUSTE CIRÚRGICO: Preenchimento automático de metadados para a Etapa 12
+                # Você pode futuramente expandir isso para ler um JSON ou TXT na pasta
+                metadados_produto = {
+                    'modelo': model_dir.name,
+                    'tom': 'Feminino, persuasivo e comercial',
+                    'duracao': '15',
+                    'nome_produto': model_dir.name,  # Usa o nome da pasta do modelo como nome do produto
+                    'beneficios': 'Prático, alta qualidade e indispensável',
+                    'nome': task_dir.name
+                }
+
                 tasks.append(
                     AdTask(
                         task_id=task_dir.name,
@@ -69,6 +81,7 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
                         shoot_type=shoot_type_dir.name,
                         status='pendente',
                         folder_path=task_dir,
+                        dados_anuncio=metadados_produto # Garante que os dados cheguem no main.py
                     )
                 )
 

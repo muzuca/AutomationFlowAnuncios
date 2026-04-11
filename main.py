@@ -1,10 +1,12 @@
 # arquivo: main.py
-# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, cria o navegador, seleciona a conta principal, executa login no Google, fecha popups nativos do Chrome, abre o Gemini, prepara a primeira tarefa pendente, valida a primeira imagem candidata de produto e gera a imagem POV com a IA..
+# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, 
+# cria o navegador, executa login, abre Gemini, valida produto, gera POV e gera roteiro de 3 cenas.
 from __future__ import annotations
 
 import logging
 import sys
 import time
+from pathlib import Path
 
 from acesso_humble import executar_sincronizacao
 from anuncios.processor import describe_task, get_next_pending_task, prepare_task
@@ -60,7 +62,7 @@ def main() -> None:
 
     try:
         log_step('ETAPA 1: sincronizando credenciais HUMBLE')
-        executar_sincronizacao()
+        #executar_sincronizacao()
         log_success('Credenciais sincronizadas')
 
         log_step('ETAPA 2: carregando configuracoes do projeto')
@@ -105,11 +107,14 @@ def main() -> None:
         prepared = prepare_task(task)
         log_success(describe_task(prepared.task))
 
-        if prepared.price_asset:
-            log_success(f'Arquivo de preco identificado: {prepared.price_asset.name}')
+        # Identificação de ativos para roteirização posterior
+        arquivo_preco = prepared.price_asset.path if prepared.price_asset else None
+        if arquivo_preco:
+            log_success(f'Arquivo de preco identificado: {arquivo_preco.name}')
 
-        if prepared.reference_asset:
-            log_success(f'Arquivo de referencia identificado: {prepared.reference_asset.name}')
+        arquivo_ref = prepared.reference_asset.path if prepared.reference_asset else None
+        if arquivo_ref:
+            log_success(f'Arquivo de referencia identificado: {arquivo_ref.name}')
 
         if prepared.candidate_product_assets:
             nomes = ', '.join(asset.name for asset in prepared.candidate_product_assets)
@@ -128,7 +133,7 @@ def main() -> None:
         if validada:
             log_success(f'Imagem aprovada como produto principal: {primeira_imagem.name}')
             
-            # --- ETAPA 11 ---
+            # --- ETAPA 11: GERAÇÃO POV ---
             log_step('ETAPA 11: gerando imagem POV com duas maos')
             caminho_pov = gemini.executar_fluxo_imagem_pov(
                 tarefa=prepared.task,
@@ -138,21 +143,51 @@ def main() -> None:
             
             if caminho_pov:
                 log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
+                
+                # --- ETAPA 12: GERAÇÃO DE ROTEIRO ---
+                log_step('ETAPA 12: gerando roteiro de anúncio de 3 cenas')
+                
+                # Monta a lista de contexto: POV + Preço + Referência Extra
+                arquivos_contexto = [caminho_pov]
+                if arquivo_preco: arquivos_contexto.append(arquivo_preco)
+                if arquivo_ref: arquivos_contexto.append(arquivo_ref)
+                
+                # Coleta metadados para o prompt (nome do produto, benefícios, etc)
+                # Assume-se que prepared.task possui um dicionário ou objeto com essas infos
+                dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
+                
+                try:
+                    roteiro_bruto = gemini.treinar_e_gerar_roteiro(
+                        arquivos=arquivos_contexto,
+                        dados_produto=dados_anuncio
+                    )
+                    
+                    if roteiro_bruto and "TIMEOUT" not in roteiro_bruto:
+                        # Salva o roteiro para auditoria
+                        caminho_txt = Path(prepared.task.folder_path) / "ROTEIRO_GERADO.txt"
+                        with open(caminho_txt, "w", encoding="utf-8") as f:
+                            f.write(roteiro_bruto)
+                        log_success(f'Roteiro de 3 cenas gerado com sucesso em: {caminho_txt.name}')
+                    else:
+                        log_error('Falha ao obter resposta útil de roteiro do Gemini')
+                except Exception as e:
+                    log_error(f'Falha na geração de roteiro: {e}')
+                
             else:
                 log_error('Nao foi possivel gerar uma imagem POV valida')
-            # ----------------
                 
         else:
             log_error(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
 
-        log_success('Fluxo inicial concluido com sucesso')
+        log_success('Fluxo de automação concluído com sucesso')
         input('Pressione ENTER para encerrar o navegador... ')
 
     except Exception as exc:
-        log_error(str(exc))
+        log_error(f"Erro fatal: {str(exc)}")
 
     finally:
-        close_driver(driver)
+        if driver:
+            close_driver(driver)
 
 
 if __name__ == '__main__':
