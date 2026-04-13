@@ -80,16 +80,17 @@ def _log(msg: str) -> None:
 
 
 class GeminiAnunciosViaFlow:
-    def __init__(self, driver: Any, timeout: int = 30):
+    def __init__(self, driver: Any, url_gemini: str, timeout: int = 30):
         self.driver = driver
+        self.url_gemini = url_gemini
         self.wait = WebDriverWait(driver, timeout, poll_frequency=0.1)
         self.timeout = timeout
 
     def abrir_gemini(self) -> None:
         if 'gemini.google.com' not in self.driver.current_url:
             _log('Abrindo Gemini...')
-            self.driver.get('https://gemini.google.com/app')
-            self.wait.until(lambda d: 'gemini.google.com/app' in d.current_url or 'gemini.google.com' in d.current_url)
+            self.driver.get(self.url_gemini) # <--- AQUI
+            self.wait.until(lambda d: 'gemini.google.com' in d.current_url)
 
     def abrir_novo_chat_limpo(self) -> None:
         self._scroll_chat_ate_fim()
@@ -117,7 +118,7 @@ class GeminiAnunciosViaFlow:
                     break
                     
             if not clicou:
-                self.driver.get('https://gemini.google.com/app')
+                self.driver.get(self.url_gemini)
                 
             fim = time.time() + 10
             while time.time() < fim:
