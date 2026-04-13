@@ -1,7 +1,7 @@
 # arquivo: main.py
 # descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, 
-# cria o navegador, executa login, abre Gemini, valida produto, gera POV, gera roteiro de 3 cenas
-# e cria videos independentes no Google Flow.
+# cria o navegador, executa login, abre Gemini, valida produto, gera POV, gera roteiro de 3 cenas,
+# cria videos independentes no Google Flow e finalmente os une e redimensiona para 1080p usando FFmpeg.
 from __future__ import annotations
 
 import logging
@@ -17,6 +17,7 @@ from integrations.gemini import GeminiAnunciosViaFlow
 from integrations.google_login import login_google, open_gemini
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
+from integrations.video_manager import processar_videos
 
 
 def setup_logging() -> None:
@@ -250,6 +251,28 @@ def main() -> None:
 
             if len(videos_gerados) == len(cenas):
                 log_success('🎉 Todos os vídeos foram gerados e baixados com sucesso!')
+                
+                # --- ETAPA 14: CONCATENAÇÃO E UPSCALING PARA 1080P ---
+                log_step('ETAPA 14: Juntando cenas e gerando vídeo final 1080p via FFmpeg')
+                
+                # Define a pasta destino como a pasta "concluido" no mesmo nível da "pendente"
+                pasta_raiz_tarefas = Path(prepared.task.folder_path).parent.parent
+                pasta_concluido = pasta_raiz_tarefas / "concluido" / Path(prepared.task.folder_path).name
+                
+                nome_anuncio = f"Anuncio_{Path(prepared.task.folder_path).name}_1080p.mp4"
+                
+                video_final = processar_videos(
+                    arquivos_mp4=videos_gerados, 
+                    pasta_destino=pasta_concluido, 
+                    nome_final=nome_anuncio
+                )
+                
+                if video_final:
+                    log_success(f'✅ Anúncio final gerado e salvo em: {video_final}')
+                    log_success(f'Você já pode apagar a pasta: {prepared.task.folder_path}')
+                else:
+                    log_error('Falha ao processar o vídeo final no FFmpeg.')
+                    
             else:
                 log_error(f'Atenção: Apenas {len(videos_gerados)} de {len(cenas)} vídeos foram gerados.')
 

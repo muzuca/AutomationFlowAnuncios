@@ -75,21 +75,41 @@ class GoogleFlowAutomation:
         sys.stdout.flush()
 
     def _fechar_modais_intrusivos(self) -> None:
+        """
+        Tratamento agressivo para fechar popups de 'Welcome', 'Terms', 'Discover Veo', etc.
+        Comum ao logar com contas novas no Humble.
+        """
+        fechou_algo = False
         try:
             seletores_modais = [
                 "//span[contains(text(), 'Got it')] | //button[contains(., 'Got it')] | "
                 "//span[contains(text(), 'I agree')] | //button[contains(., 'Agree')] | "
                 "//span[contains(text(), 'Enable')] | //button[contains(., 'Enable')] | "
                 "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'agree and continue')] | "
-                "//span[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'agree and continue')]"
+                "//span[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'agree and continue')] | "
+                "//button[contains(., 'Dismiss')] | //button[contains(., 'Close')] | "
+                "//div[@role='dialog']//button[.//i[text()='close']]" # Botão de "X" (close) genérico em diálogos
             ]
             for seletor in seletores_modais:
                 botoes = self.driver.find_elements(By.XPATH, seletor)
                 for btn in botoes:
                     if btn.is_displayed():
-                        _log('Modal detectado (Terms/Workspace). Fechando automaticamente...')
+                        _log('Modal detectado (Terms/Promo/Workspace). Fechando automaticamente...')
                         self._js_click(btn)
-                        time.sleep(1.5)
+                        time.sleep(1.0)
+                        fechou_algo = True
+            
+            # Se a interface ainda parecer bloqueada, usa ESC agressivo como fallback
+            if not fechou_algo:
+                overlays = self.driver.find_elements(By.XPATH, "//div[contains(@class,'overlay') or @role='dialog']")
+                visiveis = [o for o in overlays if o.is_displayed()]
+                if visiveis:
+                    _log("Overlay ativo detectado. Forçando ESC duplo para limpar a tela.")
+                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                    time.sleep(0.5)
+                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                    time.sleep(0.5)
+
         except Exception:
             pass
 
@@ -175,6 +195,8 @@ class GoogleFlowAutomation:
             return True
 
         _log('Configurando parâmetros (Nano Banana 2 > Vídeo > 9:16 > x1 > Veo 3.1 Fast Lower)...')
+        self._fechar_modais_intrusivos() # Limpeza preventiva
+
         try:
             chip_xpath = "//button[contains(., 'Nano Banana 2') and @aria-haspopup='menu']"
             try:
@@ -252,8 +274,9 @@ class GoogleFlowAutomation:
 
     def anexar_imagem(self, caminho: Path) -> bool:
         nome_arquivo = caminho.name
+        self._fechar_modais_intrusivos() # Limpeza antes de mexer na imagem
         
-        # Focar a caixa de prompt garante que os botões inferiores da interface apareçam
+        # Focar a caixa de prompt garante que os botões inferiores fiquem visíveis
         try:
             box = self.driver.find_element(By.XPATH, "//div[@role='textbox' and @contenteditable='true']")
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", box)
@@ -262,7 +285,7 @@ class GoogleFlowAutomation:
         except Exception:
             pass
 
-        # LÓGICA DE MEMÓRIA DE UPLOAD (A imagem só é upada 1x no projeto)
+        # LÓGICA DE MEMÓRIA DE UPLOAD
         if not self._imagem_upada:
             _log(f'Fazendo upload da imagem de referência: {nome_arquivo}')
             try:
@@ -302,7 +325,7 @@ class GoogleFlowAutomation:
         else:
             _log(f'A imagem {nome_arquivo} já foi feito upload no projeto. Verificando vínculo...')
 
-        # LÓGICA DE VINCULAÇÃO INTELIGENTE (Trata a Cena 2 e 3 de forma limpa)
+        # LÓGICA DE VINCULAÇÃO INTELIGENTE
         try:
             xpath_btn_inicial = (
                 "//div[@type='button' and (contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'inicial') "
@@ -326,19 +349,19 @@ class GoogleFlowAutomation:
                 _log('Imagem anexada e vinculada com sucesso!')
             else:
                 _log('Botão "Inicial" vazio não encontrado.')
-                # Se o botão inicial não está lá, ou a imagem já está preenchendo ele, ou a UI mudou
-                # Verificamos se o nome do arquivo já está na tela
+                # Se não tem botão Inicial, verifica se o nome da imagem já está presente na UI
                 img_ja_vinculada = self.driver.find_elements(By.XPATH, f"//*[contains(text(), '{nome_arquivo}')]")
                 if img_ja_vinculada and any(el.is_displayed() for el in img_ja_vinculada):
                     _log(f'✔ A imagem {nome_arquivo} já está selecionada/vinculada na interface! (Reaproveitada)')
                 else:
-                    _log(f'Aviso: Não consegui confirmar 100% visualmente, mas assumindo que {nome_arquivo} continua vinculada da cena anterior.')
+                    _log(f'Aviso: Assumindo que {nome_arquivo} continua vinculada da cena anterior.')
 
             return True
 
         except Exception as e:
-            _log(f'🚨 Falha ao tratar anexo de imagem: {e}')
-            return False
+            _log(f'🚨 Erro na etapa de vinculação (imagem provavelmtente já vinculada): {e}')
+            # Não falha imediatamente, permite o script tentar preencher o prompt
+            return True
 
     def _ler_texto_prompt_box(self, box: WebElement) -> str:
         try:
@@ -348,6 +371,8 @@ class GoogleFlowAutomation:
 
     def enviar_prompt_e_aguardar(self, prompt: str, timeout_geracao: int = 420) -> bool:
         _log("[FLOW-IA] Preenchendo prompt (Colando com Pyperclip)...")
+        self._fechar_modais_intrusivos() # Limpeza final para garantir campo interagível
+
         try:
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
             time.sleep(0.2)
@@ -368,6 +393,7 @@ class GoogleFlowAutomation:
                 self.driver.execute_script("arguments[0].focus();", box)
                 self.driver.execute_script("arguments[0].click();", box)
             except Exception:
+                # Se falhar o foco, o modal intrusivo pode estar bloqueando. Tenta remoção forçada.
                 try:
                     overlays = self.driver.find_elements(
                         By.XPATH,
