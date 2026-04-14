@@ -92,7 +92,7 @@ def main() -> None:
 
     try:
         log_step('ETAPA 1: sincronizando credenciais HUMBLE')
-        # executar_sincronizacao()  # Apenas roda no fallback abaixo se todas as contas falharem
+        executar_sincronizacao()
         log_success('Credenciais prontas')
 
         log_step('ETAPA 2: carregando configuracoes do projeto')
