@@ -1,12 +1,14 @@
 # arquivo: main.py
-# descricao: orquestra a inicializacao da automacao, sincroniza credenciais, carrega configuracoes, 
-# cria o navegador, executa login, abre Gemini, valida produto, gera POV, gera roteiro de 3 cenas,
-# cria videos independentes no Google Flow e finalmente os une e redimensiona para 1080p usando FFmpeg.
+# descricao: Orquestrador blindado. Sincroniza credenciais, carrega configuracoes,
+# cria navegador e executa o fluxo completo. Possui LOOP INFINITO DE RETENTATIVAS
+# com rodízio automático de contas em caso de qualquer falha no meio do processo.
 from __future__ import annotations
 
+import os
 import logging
 import sys
 import time
+import shutil
 from pathlib import Path
 
 from acesso_humble import executar_sincronizacao
@@ -17,7 +19,7 @@ from integrations.gemini import GeminiAnunciosViaFlow
 from integrations.google_login import login_google, open_gemini
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
-from integrations.video_manager import processar_videos
+from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
 
 
 def setup_logging() -> None:
@@ -59,232 +61,305 @@ def fechar_popup_cromado_pos_gemini(driver) -> None:
         log_error('Popup nativo do Chrome permaneceu apos abrir o Gemini')
 
 
+def salvar_ultima_conta_env(index: int) -> None:
+    """Atualiza ou insere a variável LAST_ACCOUNT_INDEX no arquivo .env"""
+    try:
+        env_path = Path('.env')
+        if not env_path.exists():
+            env_path.write_text(f"LAST_ACCOUNT_INDEX={index}\n", encoding='utf-8')
+            return
+        
+        lines = env_path.read_text(encoding='utf-8').splitlines()
+        found = False
+        new_lines = []
+        for line in lines:
+            if line.startswith("LAST_ACCOUNT_INDEX="):
+                new_lines.append(f"LAST_ACCOUNT_INDEX={index}")
+                found = True
+            else:
+                new_lines.append(line)
+        
+        if not found:
+            new_lines.append(f"LAST_ACCOUNT_INDEX={index}")
+            
+        env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
+    except Exception as e:
+        log_error(f"Aviso: Não foi possível salvar o índice da conta no .env: {e}")
+
+
 def main() -> None:
-    driver = None
     setup_logging()
 
     try:
         log_step('ETAPA 1: sincronizando credenciais HUMBLE')
-        #executar_sincronizacao()
-        log_success('Credenciais sincronizadas')
+        # executar_sincronizacao()  # Apenas roda no fallback abaixo se todas as contas falharem
+        log_success('Credenciais prontas')
 
         log_step('ETAPA 2: carregando configuracoes do projeto')
         settings = get_settings()
-        log_success('Configuracoes carregadas')
+        
+        # --- PARÂMETROS GLOBAIS DO .ENV ---
+        qtd_variantes = int(os.getenv("VIDEOS_POR_ANUNCIO", 1))
+        qtd_cenas_anuncio = int(os.getenv("CENAS_POR_ANUNCIO", 3))
+        
+        log_success(f'Configuração ativa: {qtd_variantes} variante(s) de {qtd_cenas_anuncio} cena(s) cada.')
 
-        log_step('ETAPA 3: criando navegador Chrome')
-        driver = create_driver(settings)
-        log_success('Navegador iniciado')
-
-        log_step('ETAPA 4: selecionando conta principal')
-        account = settings.accounts[0]
-        log_success(f'Conta selecionada: {account.email}')
-
-        log_step('ETAPA 5: fazendo login no Google')
-        login_google(driver, settings, account)
-        log_success('Login no Google concluido')
-
-        log_step('ETAPA 6: fechando popup nativo do Chrome')
-        popup_fechado = dismiss_chrome_native_popup_with_retry(driver)
-        if popup_fechado:
-            log_success('Popup nativo do Chrome liberado com sucesso')
-        else:
-            log_error('Popup nativo do Chrome nao confirmou fechamento')
-
-        log_step('ETAPA 7: abrindo Gemini (para manter sessao Google ativa)')
-        open_gemini(driver, settings)
-        log_success('Gemini aberto com sucesso')
-
-        fechar_popup_cromado_pos_gemini(driver)
-
-        log_step('ETAPA 8: procurando primeira tarefa pendente')
+        log_step('ETAPA 3: procurando primeira tarefa pendente')
         task = get_next_pending_task(settings.products_base_dir)
 
         if task is None:
-            log_success('Nenhuma tarefa pendente encontrada')
+            log_success('Nenhuma tarefa pendente encontrada. Encerrando.')
             return
 
         log_success(f'Tarefa encontrada: {task.folder_path}')
 
-        log_step('ETAPA 9: preparando arquivos da tarefa')
-        prepared = prepare_task(task)
-        log_success(describe_task(prepared.task))
+        accounts = settings.accounts
+        if not accounts:
+            log_error("Nenhuma conta configurada nas settings. Encerrando.")
+            return
 
-        # Define o caminho do roteiro final
-        caminho_txt = Path(prepared.task.folder_path) / "ROTEIRO_GERADO.txt"
+        sucesso_absoluto = False
         
-        # Variável para guardar a imagem principal a usar no Flow
-        imagem_base_flow = None
-        
-        if prepared.candidate_product_assets:
-            primeira_imagem = prepared.candidate_product_assets[0].path
-            imagem_base_flow = primeira_imagem
-        
-        # LÓGICA DE CHECKPOINT: Se o roteiro já existe, pula o Gemini!
-        if not caminho_txt.exists():
+        # Inicia a contagem baseada na última conta salva no .env (ou 0)
+        tentativa_atual = int(os.getenv("LAST_ACCOUNT_INDEX", "0"))
+        falhas_consecutivas = 0
+
+        # =========================================================================
+        # O LOOP DE TITÂNIO: Roda infinitamente alternando as contas até dar certo
+        # =========================================================================
+        while not sucesso_absoluto:
             
-            # Identificação de ativos para roteirização posterior
-            arquivo_preco = prepared.price_asset.path if prepared.price_asset else None
-            if arquivo_preco:
-                log_success(f'Arquivo de preco identificado: {arquivo_preco.name}')
+            # Se todas as contas da fila falharem, roda o bot pra atualizar a planilha
+            if falhas_consecutivas > 0 and falhas_consecutivas >= len(accounts):
+                log_error("🚨 TODAS as contas do rodízio atual falharam! Reciclando contas...")
+                try:
+                    executar_sincronizacao()
+                except Exception as e:
+                    log_error(f"Erro ao ressincronizar contas: {e}")
+                
+                settings = get_settings()
+                accounts = settings.accounts
+                if not accounts:
+                    log_error("Nenhuma conta encontrada após sincronizar. Encerrando.")
+                    return
+                
+                tentativa_atual = 0
+                falhas_consecutivas = 0
+                salvar_ultima_conta_env(0)
 
-            arquivo_ref = prepared.reference_asset.path if prepared.reference_asset else None
-            if arquivo_ref:
-                log_success(f'Arquivo de referencia identificado: {arquivo_ref.name}')
-
-            if prepared.candidate_product_assets:
-                nomes = ', '.join(asset.name for asset in prepared.candidate_product_assets)
-                log_success(f'Candidatos a imagem de produto: {nomes}')
-            else:
-                log_error('Nenhum candidato de imagem encontrado na tarefa')
-                return
-
-            log_step('ETAPA 10: validando primeira imagem candidata com Gemini')
-            log_success(f'Validando primeira candidata: {primeira_imagem.name}')
-
-            url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
-            gemini = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
+            # Define qual será o e-mail da vez
+            idx_conta = tentativa_atual % len(accounts)
+            account = accounts[idx_conta]
             
-            validada = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=40)
+            log_step("=====================================================================")
+            log_step(f"▶ INICIANDO TENTATIVA {falhas_consecutivas + 1} | Conta [{idx_conta}]: {account.email}")
+            log_step("=====================================================================")
 
-            if validada:
-                log_success(f'Imagem aprovada como produto principal: {primeira_imagem.name}')
+            driver = None
+            try:
+                log_step('Preparando ambiente e navegador...')
+                driver = create_driver(settings)
                 
-                # --- ETAPA 11: GERAÇÃO POV ---
-                log_step('ETAPA 11: gerando imagem POV com duas maos')
-                caminho_pov = gemini.executar_fluxo_imagem_pov(
-                    tarefa=prepared.task,
-                    foto_produto_escolhida=primeira_imagem,
-                    max_tentativas=3,
-                )
+                login_google(driver, settings, account)
+                dismiss_chrome_native_popup_with_retry(driver)
                 
-                if caminho_pov:
-                    log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
-                    imagem_base_flow = caminho_pov  # Usa o POV como base para o Flow se gerado com sucesso
+                open_gemini(driver, settings)
+                fechar_popup_cromado_pos_gemini(driver)
+
+                prepared = prepare_task(task)
+                log_success(describe_task(prepared.task))
+
+                caminho_txt = Path(prepared.task.folder_path) / "ROTEIRO_GERADO.txt"
+                imagem_base_flow = None
+                
+                if prepared.candidate_product_assets:
+                    primeira_imagem = prepared.candidate_product_assets[0].path
+                    imagem_base_flow = primeira_imagem
+                
+                arquivo_ref = prepared.reference_asset.path if prepared.reference_asset else None
+                
+                # --- CHECKPOINT: IA (Validação e Roteiro) ---
+                if not caminho_txt.exists():
+                    arquivo_preco = prepared.price_asset.path if prepared.price_asset else None
+                    if arquivo_preco: log_success(f'Arquivo de preco: {arquivo_preco.name}')
+                    if arquivo_ref: log_success(f'Arquivo de referencia: {arquivo_ref.name}')
+
+                    if not prepared.candidate_product_assets:
+                        raise Exception('Nenhum candidato de imagem encontrado na tarefa')
+
+                    log_step('ETAPA IA: Validando imagem e gerando POV / Roteiro')
+                    url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
+                    gemini = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
                     
-                    # --- ETAPA 12: GERAÇÃO DE ROTEIRO ---
-                    log_step('ETAPA 12: gerando roteiro de anúncio de 3 cenas')
-                    
-                    arquivos_contexto = [caminho_pov]
-                    if arquivo_preco: arquivos_contexto.append(arquivo_preco)
-                    if arquivo_ref: arquivos_contexto.append(arquivo_ref)
-                    
-                    dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
-                    
-                    try:
-                        roteiro_bruto = gemini.treinar_e_gerar_roteiro(
-                            arquivos=arquivos_contexto,
-                            dados_produto=dados_anuncio
+                    validada = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=40)
+
+                    if validada:
+                        log_success(f'Imagem aprovada como produto principal: {primeira_imagem.name}')
+                        caminho_pov = gemini.executar_fluxo_imagem_pov(
+                            tarefa=prepared.task,
+                            foto_produto_escolhida=primeira_imagem,
+                            max_tentativas=3,
                         )
                         
-                        if roteiro_bruto and "TIMEOUT" not in roteiro_bruto:
-                            with open(caminho_txt, "w", encoding="utf-8") as f:
-                                f.write(roteiro_bruto)
-                            log_success(f'Roteiro de 3 cenas gerado com sucesso em: {caminho_txt.name}')
+                        if caminho_pov:
+                            log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
+                            imagem_base_flow = caminho_pov
+                            
+                            arquivos_contexto = [caminho_pov]
+                            if arquivo_preco: arquivos_contexto.append(arquivo_preco)
+                            if arquivo_ref: arquivos_contexto.append(arquivo_ref)
+                            
+                            dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
+                            
+                            roteiro_bruto = gemini.treinar_e_gerar_roteiro(
+                                arquivos=arquivos_contexto,
+                                dados_produto=dados_anuncio,
+                                arquivo_ref=arquivo_ref,
+                                qtd_cenas=qtd_cenas_anuncio
+                            )
+                            
+                            if roteiro_bruto and "TIMEOUT" not in roteiro_bruto and "ERRO" not in roteiro_bruto:
+                                with open(caminho_txt, "w", encoding="utf-8") as f:
+                                    f.write(roteiro_bruto)
+                                log_success(f'Roteiro gerado: {caminho_txt.name}')
+                            else:
+                                raise Exception('Falha ao obter resposta útil de roteiro do Gemini')
                         else:
-                            log_error('Falha ao obter resposta útil de roteiro do Gemini')
-                            return # Aborta se o roteiro falhar
-                    except Exception as e:
-                        log_error(f'Falha na geração de roteiro: {e}')
-                        return # Aborta
-                    
-                else:
-                    log_error('Nao foi possivel gerar uma imagem POV valida')
-                    return # Aborta
-                    
-            else:
-                log_error(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
-                return # Aborta
-                
-        else:
-            log_success(f'🚀 CHECKPOINT: Roteiro pré-existente encontrado ({caminho_txt.name})! Pulando etapas 10, 11 e 12 da IA.')
-            # Verifica se já existe um POV na pasta para usar no Flow
-            caminho_pov_existente = Path(prepared.task.folder_path) / "POV_VALIDADO.png"
-            if caminho_pov_existente.exists():
-                imagem_base_flow = caminho_pov_existente
-
-
-        # --- ETAPA 13: GERAÇÃO DE VÍDEOS NO FLOW ---
-        log_step('ETAPA 13: Gerando vídeos independentes no Flow')
-        
-        cenas = ler_e_separar_cenas(caminho_txt)
-        if len(cenas) == 0:
-            log_error("Nenhuma cena encontrada no roteiro gerado. Verifique o padrão [CENA X].")
-        else:
-            log_success(f'Foram extraídas {len(cenas)} cenas do roteiro.')
-            
-            url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
-            flow_bot = GoogleFlowAutomation(driver, url_flow=url_flw)
-            
-            flow_bot.acessar_flow()
-            
-            videos_gerados = []
-            
-            for idx, prompt_cena in enumerate(cenas, start=1):
-                log_step(f'Processando Cena {idx}/{len(cenas)}...')
-                
-                flow_bot.clicar_novo_projeto()
-                
-                # VALIDAÇÃO CRÍTICA: Se a configuração falhar, pula para a próxima cena (ou aborta)
-                configuracao_ok = flow_bot.configurar_parametros_video()
-                if not configuracao_ok:
-                    log_error(f"Falha ao configurar a interface para a Cena {idx}. Pulando cena.")
-                    continue  # Pula o upload e a geração
-                
-                # ---> ANEXAR IMAGEM ANTES DE ENVIAR O PROMPT <---
-                if imagem_base_flow and imagem_base_flow.exists():
-                    flow_bot.anexar_imagem(imagem_base_flow)
-                else:
-                    log_error("Aviso: Nenhuma imagem base encontrada para anexar no Flow.")
-                
-                sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
-                
-                if sucesso_geracao:
-                    caminho_video = Path(prepared.task.folder_path) / f"cena_{idx}.mp4"
-                    baixou = flow_bot.baixar_video_gerado(caminho_video)
-                    if baixou:
-                        videos_gerados.append(caminho_video)
+                            raise Exception('Nao foi possivel gerar uma imagem POV valida')
                     else:
-                        log_error(f'Falha ao baixar a Cena {idx}')
+                        raise Exception(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
                 else:
-                    log_error(f'Falha ao gerar a Cena {idx} no Flow.')
+                    log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Pulando etapas de IA iniciais.')
+                    caminho_pov_existente = Path(prepared.task.folder_path) / "POV_VALIDADO.png"
+                    if caminho_pov_existente.exists():
+                        imagem_base_flow = caminho_pov_existente
 
-            if len(videos_gerados) == len(cenas):
-                log_success('🎉 Todos os vídeos foram gerados e baixados com sucesso!')
-                
-                # --- ETAPA 14: CONCATENAÇÃO E UPSCALING PARA 1080P ---
-                log_step('ETAPA 14: Juntando cenas e gerando vídeo final 1080p via FFmpeg')
-                
-                # Define a pasta destino como a pasta "concluido" no mesmo nível da "pendente"
-                pasta_raiz_tarefas = Path(prepared.task.folder_path).parent.parent
-                pasta_concluido = pasta_raiz_tarefas / "concluido" / Path(prepared.task.folder_path).name
-                
-                nome_anuncio = f"Anuncio_{Path(prepared.task.folder_path).name}_1080p.mp4"
-                
-                video_final = processar_videos(
-                    arquivos_mp4=videos_gerados, 
-                    pasta_destino=pasta_concluido, 
-                    nome_final=nome_anuncio
-                )
-                
-                if video_final:
-                    log_success(f'✅ Anúncio final gerado e salvo em: {video_final}')
-                    log_success(f'Você já pode apagar a pasta: {prepared.task.folder_path}')
-                else:
-                    log_error('Falha ao processar o vídeo final no FFmpeg.')
+                # --- CHECKPOINT: GERAÇÃO FLOW ---
+                log_step('ETAPA FLOW: Gerando Variantes')
+                cenas = ler_e_separar_cenas(caminho_txt, qtd_cenas=qtd_cenas_anuncio)
+                if len(cenas) == 0:
+                    raise Exception("Nenhuma cena encontrada no roteiro gerado.")
+                elif len(cenas) < qtd_cenas_anuncio:
+                    log_error(f"Aviso: O roteiro gerou apenas {len(cenas)} cenas, mas {qtd_cenas_anuncio} eram esperadas.")
                     
-            else:
-                log_error(f'Atenção: Apenas {len(videos_gerados)} de {len(cenas)} vídeos foram gerados.')
+                url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
+                variantes_720p_geradas = []
+                
+                for v_idx in range(1, qtd_variantes + 1):
+                    caminho_var_720p = Path(prepared.task.folder_path) / f"Variante_{v_idx}_720p.mp4"
+                    
+                    if caminho_var_720p.exists():
+                        log_success(f'🚀 CHECKPOINT VARIANTE: Variante {v_idx} já existe!')
+                        variantes_720p_geradas.append(caminho_var_720p)
+                        continue
 
-        log_success('Fluxo de automação concluído com sucesso')
-        input('Pressione ENTER para encerrar o navegador... ')
+                    log_step(f'--- GERANDO VARIANTE {v_idx}/{qtd_variantes} ---')
+                    driver.get("about:blank")
+                    time.sleep(1)
+                    
+                    flow_bot = GoogleFlowAutomation(driver, url_flow=url_flw)
+                    flow_bot.acessar_flow()
+                    videos_cenas_parciais = []
+                    
+                    for c_idx, prompt_cena in enumerate(cenas, start=1):
+                        flow_bot.clicar_novo_projeto()
+                        if not flow_bot.configurar_parametros_video():
+                            raise Exception(f"Falha ao configurar a interface para a Cena {c_idx}.")
+                        
+                        if imagem_base_flow and imagem_base_flow.exists():
+                            flow_bot.anexar_imagem(imagem_base_flow)
+                        
+                        sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
+                        
+                        if sucesso_geracao:
+                            caminho_video = Path(prepared.task.folder_path) / f"var{v_idx}_cena_{c_idx}.mp4"
+                            if flow_bot.baixar_video_gerado(caminho_video):
+                                videos_cenas_parciais.append(caminho_video)
+                            else:
+                                raise Exception(f'Falha ao baixar a Cena {c_idx}')
+                        else:
+                            raise Exception(f'Falha ao gerar a Cena {c_idx} no Flow.')
+
+                    if len(videos_cenas_parciais) == len(cenas):
+                        if concatenar_cenas_720p(arquivos_mp4=videos_cenas_parciais, saida_path=caminho_var_720p):
+                            variantes_720p_geradas.append(caminho_var_720p)
+                            limpar_arquivos_temporarios(videos_cenas_parciais)
+                        else:
+                            raise Exception(f"Falha ao concatenar as cenas da Variante {v_idx}.")
+                    else:
+                        raise Exception(f'Variante {v_idx} falhou em gerar todas as cenas parciais.')
+
+                if not variantes_720p_geradas:
+                    raise Exception("Nenhuma variante foi gerada com sucesso.")
+
+                # --- CHECKPOINT: JÚRI IA ---
+                log_step('ETAPA JÚRI: Avaliação do Diretor de Arte (IA)')
+                video_vencedor_720 = variantes_720p_geradas[0]
+                
+                if len(variantes_720p_geradas) > 1:
+                    url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
+                    gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
+                    gemini_juri.abrir_gemini()
+                    
+                    roteiro_texto = caminho_txt.read_text(encoding='utf-8')
+                    video_vencedor_720 = gemini_juri.avaliar_melhor_variante_de_video(variantes_720p_geradas, roteiro_texto)
+                        
+                log_success(f'🎉 VARIANTE VENCEDORA: {video_vencedor_720.name}')
+
+                # --- ETAPA FINAIS: UPSCALE E ORGANIZAÇÃO ---
+                log_step('ETAPA FINAL: Upscale 1080p e Organização')
+                nome_pasta = Path(prepared.task.folder_path).name
+                video_final_1080 = Path(prepared.task.folder_path) / f"[01_ESCOLHIDO]_Anuncio_{nome_pasta}_1080p.mp4"
+                
+                sucesso_upscale = converter_para_1080p(entrada=video_vencedor_720, saida=video_final_1080)
+                
+                if not sucesso_upscale or not video_final_1080.exists():
+                    raise Exception("Erro fatal no upscaling do FFmpeg. Arquivo final não foi gerado.")
+
+                pasta_pendente = Path(prepared.task.folder_path)
+                pasta_raiz_tarefas = pasta_pendente.parent.parent
+                pasta_concluido = pasta_raiz_tarefas / "concluido" / nome_pasta
+                pasta_concluido.mkdir(parents=True, exist_ok=True)
+                
+                # Cópia segura (Copy em vez de Move)
+                for variante in variantes_720p_geradas:
+                    if variante != video_vencedor_720:
+                        shutil.copy2(str(variante), str(pasta_concluido / f"[02_ALTERNATIVA]_{variante.name}"))
+                    else:
+                        shutil.copy2(str(variante), str(pasta_concluido / f"[BACKUP_720p]_{variante.name}"))
+                    
+                for arquivo in pasta_pendente.iterdir():
+                    if arquivo.is_file():
+                        shutil.copy2(str(arquivo), str(pasta_concluido / arquivo.name))
+                        
+                # Apenas limpa O CONTEÚDO da pasta pendente, MANTENDO o diretório vivo.
+                for f in pasta_pendente.iterdir():
+                    if f.is_file(): 
+                        f.unlink(missing_ok=True)
+                # pasta_pendente.rmdir() <- Removido, a pasta continua existindo!
+                
+                log_success(f'Conteúdo da pasta {nome_pasta} movido para concluído. O diretório original ficou preservado e vazio.')
+                
+                # Grava a conta atual como vencedora e encerra o loop de retentativas
+                salvar_ultima_conta_env(idx_conta)
+                sucesso_absoluto = True 
+
+            except Exception as exc:
+                log_error(f"Falha na execução: {str(exc)}")
+                log_step("Iniciando próximo rodízio de conta/tentativa instantaneamente...")
+                falhas_consecutivas += 1
+                tentativa_atual += 1
+
+            finally:
+                if driver:
+                    close_driver(driver)
+                    driver = None
+
+        log_success('Fluxo de automação 100% concluído para esta tarefa!')
+        input('Pressione ENTER para encerrar... ')
 
     except Exception as exc:
-        log_error(f"Erro fatal: {str(exc)}")
-
-    finally:
-        if driver:
-            close_driver(driver)
+        log_error(f"Erro Crítico de Inicialização: {str(exc)}")
 
 
 if __name__ == '__main__':

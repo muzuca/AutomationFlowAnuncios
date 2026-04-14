@@ -1,13 +1,15 @@
 # arquivo: integrations/gemini.py
 # descricao: fachada GeminiAnunciosViaFlow blindada para validacao de imagem,
-# geracao POV e criacao de roteiro de 3 cenas.
+# geracao POV e criacao de roteiro dinâmico.
 # Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s) e AUTO-F5 EM ERROS DA UI.
+# Adicionado suporte para avaliar múltiplas variantes de vídeo e eleger a melhor via interface Web.
 
 from __future__ import annotations
 
 import re
 import time
 import shutil
+import pyperclip
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -22,57 +24,65 @@ from selenium.webdriver.support.ui import WebDriverWait
 EXTENSOES_IMAGEM = ('.jpg', '.jpeg', '.png', '.webp')
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Templates de Roteirização (MANTIDOS ORIGINAIS E BONITOS)
+# Templates de Roteirização (ENGENHARIA MASTER FULL TIKTOK SHOP - TEXTO PURO)
 # ──────────────────────────────────────────────────────────────────────────────
 
 _TEMPLATE_TREINO_MESTRE = """
-Você vai atuar como especialista em criação de anúncios curtos para TikTok Shop e geração de prompts para vídeos em 3 cenas.
+Você é o 'Especialista em Geração de Anúncios para o TikTok Shop'. Sua missão é atuar como um ENGENHEIRO DE ROTEIROS TIKTOK SHOP (MASTER FULL).
+Sua tarefa é interpretar fotos e vídeos para criar roteiros técnicos, onde cada cena tem exatos 8 segundos.
 
-Regras obrigatórias:
-- Sempre considerar como referência principal os arquivos anexados nesta conversa.
-- A primeira imagem anexada será a referência visual do produto sendo segurado pelas mãos da modelo em enquadramento POV.
-- A segunda imagem anexada mostrará preço e nome do produto.
-- A terceira referência será uma imagem com descrição do produto ou um vídeo com a fala validada.
-- Seu trabalho é interpretar essas referências e gerar um roteiro publicitário dividido em exatamente 3 cenas.
-- Cada cena deve ser pensada para virar um vídeo separado no Flow.
-- Mantenha consistência visual entre as 3 cenas.
-- Priorize estética realista, feminina, natural, linguagem de conversão e clareza comercial.
-- Quando eu pedir roteiro, responda no formato [CENA 1], [CENA 2], [CENA 3], sem explicações extras.
-- Quando eu pedir imagem de referência POV, entenda que quero uma composição realista do produto nas mãos da modelo, em alta resolução, com aparência premium e enquadramento vertical para short-form video.
+1. REGRAS DE OURO (NÃO NEGOCIÁVEIS)
+• MÉTRICA: Cada fala DEVE ter entre 24 e 25 palavras (para bater exatamente 8 segundos por cena).
+• TOM: Sotaque Carioca, energia máxima, "smiling voice", ritmo acelerado.
+• VISUAL: Use sempre "REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO".
+• MOVIMENTO SEGURO (ANTI-GLITCH): Câmera 100% estática (Locked static shot. NO camera movement). Mãos e braços devem permanecer IMÓVEIS segurando os produtos, exatamente como na foto original. NUNCA crie ações de apontar se as mãos estiverem ocupadas (isso gera uma "terceira mão" e violações). Foque os movimentos APENAS em expressões faciais sutis (sorrisos, piscar de olhos, respiração natural) e na fala da modelo.
+• PREÇO (REGRA DE PRECISÃO): No áudio, arredonde SEMPRE para o próximo número inteiro imediatamente acima (Ex: R$ 30,40 vira "menos de trinta e um reais"; R$ 50,90 vira "menos de cinquenta e um reais"). A extração do nome, preço e benefícios do produto deve ser feita DIRETAMENTE da leitura das imagens enviadas.
+• ESTRUTURA NARRATIVA: O anúncio todo deve garantir um gancho forte na primeira cena, falar de qualidades/benefícios no meio, e fazer a chamada para ação (CTA) com o preço na última cena. Proibido começar com "Para tudo" ou "Gente olha". Comece com o benefício direto.
+• INDEPENDÊNCIA DE CENA (FLOW): Cada cena é tratada pela IA de vídeo como um arquivo único. É PROIBIDO usar palavras como "same", "repeat", "equal to previous". Repita integralmente todas as descrições técnicas de áudio, voz e câmera em TODAS as cenas.
+• FORMATAÇÃO (TEXTO CORRIDO): Responda APENAS com o texto corrido de cada cena logo abaixo da sua respectiva tag [CENA X]. É ESTRITAMENTE PROIBIDO usar caixas/blocos de código (como ```text ou ```). NÃO use negritos ou marcações. Entregue o texto puro para que um robô possa ler.
 
-Confirme brevemente que entendeu a função e aguarde os próximos comandos.
-""".strip()
-
-_TEMPLATE_ROTEIRO_3_CENAS = """Use como referência principal os arquivos anexados nesta conversa:
-1. imagem do produto com mãos da modelo em POV
-2. imagem com preço e nome do produto
-3. imagem com descrição do produto (ou vídeo com fala validada)
-
-Crie um roteiro de anúncio dividido em exatamente 3 cenas para TikTok Shop.
-Cada cena será gravada como um vídeo separado no Flow.
-
-Regras:
-- Exatamente 3 cenas, sem mais nem menos
-- Manter consistência visual e narrativa entre as cenas
-- Cada cena deve especificar: ação da modelo, fala (se houver) e texto na tela
-- Tom: {tom}
-- Duração total alvo: {duracao}s
-- Produto: {nome_produto}
-- Benefícios principais: {beneficios}
-
-Formato obrigatório de resposta:
+2. PROTOCOLO DE SAÍDA (EXEMPLO DE ESTRUTURA)
+Você deve entregar a resposta seguindo EXATAMENTE esta estrutura em texto puro:
 
 [CENA 1]
-...
+Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
+CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
+ACTION SEQUENCE — 1. Model keeps hands completely still, firmly holding the items exactly as in the photo. 2. Subtle facial expression of joyful shock and smiling. 3. Very subtle natural breathing.
+Model voiceover (Ana/Lucas) says: "[Texto de gancho com exatas 24-25 palavras]"
+AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 [CENA 2]
-...
+Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
+CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
+ACTION SEQUENCE — 1. Model keeps hands completely still, firmly holding the items exactly as in the photo. 2. NO camera rotation or zoom. 3. Model smiles and speaks naturally to the camera.
+Model voiceover (Ana/Lucas) says: "[Texto de qualidades/benefícios com exatas 24-25 palavras]"
+AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 [CENA 3]
-...
+Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
+CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
+ACTION SEQUENCE — 1. Model keeps hands completely still, holding the items. Do NOT point or move arms. 2. Friendly wink and wide smile. 3. NO glitches.
+Model voiceover (Ana/Lucas) says: "[Texto de CTA e preço com exatas 24-25 palavras]"
+AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
-Responda apenas com as 3 cenas, sem explicações extras.
+Confirme brevemente que entendeu a função e aguarde o comando com os arquivos.
 """
+
+_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo anúncio de {qtd_cenas} cenas com base nos arquivos em anexo. 
+Na fala devemos garantir o gancho na cena 1, falar as qualidades e benefícios do produto no meio, fala do preco e o cta no final. 
+
+Estou enviando em anexo:
+- A foto do produto com a modelo apresentando (POV)
+- Uma imagem com o nome do produto e o preco
+- {texto_referencia_dinamico}
+
+Extraia o nome do produto, o preço e os detalhes diretamente da leitura das imagens/vídeo.
+
+Siga ESTRITAMENTE o Protocolo de Saída definido no seu treinamento em texto puro corrido, usando as tags [CENA 1], [CENA 2], etc.
+Lembre-se da regra de ouro: Câmera 100% estática, modelo imóvel sem mover braços, preço arredondado para cima, exatas 24-25 palavras por cena.
+Responda APENAS com as {qtd_cenas} cenas estruturadas, nada mais.
+"""
+
 
 def _log(msg: str) -> None:
     ts = time.strftime('%H:%M:%S')
@@ -89,15 +99,34 @@ class GeminiAnunciosViaFlow:
     def abrir_gemini(self) -> None:
         if 'gemini.google.com' not in self.driver.current_url:
             _log('Abrindo Gemini...')
-            self.driver.get(self.url_gemini) # <--- AQUI
+            self.driver.get(self.url_gemini) 
             self.wait.until(lambda d: 'gemini.google.com' in d.current_url)
+            
+            # Validação instantânea da URL
+            time.sleep(1.5) # Dá 1 segundo e meio pro Google decidir se vai redirecionar
+            if '/app' not in self.driver.current_url:
+                _log(f'🚨 URL redirecionada para a página inicial ({self.driver.current_url}). Conta inoperante.')
+                raise Exception("Conta redirecionada para fora do Gemini App. Trocando de conta.")
 
     def abrir_novo_chat_limpo(self) -> None:
         self._scroll_chat_ate_fim()
         _log('Criando novo chat nativamente via botão da interface...')
+        
         if 'gemini.google.com' not in self.driver.current_url:
             self.abrir_gemini()
             
+        # VALIDAÇÃO AGRESSIVA DE URL (O "Pulo do Gato")
+        # Se por acaso estava no site mas a URL perdeu o "/app", força recarregar.
+        if '/app' not in self.driver.current_url:
+            _log('Forçando URL principal do Gemini...')
+            self.driver.get(self.url_gemini)
+            time.sleep(1.5)
+            
+            # Se o Google tirou o "/app" de novo, a conta já era.
+            if '/app' not in self.driver.current_url:
+                _log(f'🚨 CONTA INOPERANTE! Redirecionou para: {self.driver.current_url}')
+                raise Exception('Conta bloqueada/inoperante. O Gemini redirecionou a URL.')
+
         try:
             seletores_botao = [
                 'side-nav-action-button[data-test-id="new-chat-button"] a',
@@ -118,7 +147,13 @@ class GeminiAnunciosViaFlow:
                     break
                     
             if not clicou:
+                _log('Botão de Novo Chat não encontrado. Forçando URL raiz...')
                 self.driver.get(self.url_gemini)
+                time.sleep(2)
+                
+                if '/app' not in self.driver.current_url:
+                    _log(f'🚨 CONTA INOPERANTE APÓS REFRESH! Redirecionou para: {self.driver.current_url}')
+                    raise Exception('Conta bloqueada/inoperante. O Gemini redirecionou a URL.')
                 
             fim = time.time() + 10
             while time.time() < fim:
@@ -132,8 +167,12 @@ class GeminiAnunciosViaFlow:
             self._scroll_chat_ate_fim()
             _log('Novo chat pronto para receber comandos.')
             
+        except TimeoutException:
+            _log('🚨 ERRO RÁPIDO: Campo de prompt não encontrado.')
+            raise Exception('Interface do Gemini falhou em inicializar o chat.')
         except Exception as e:
             _log(f'Erro ao tentar criar novo chat: {e}')
+            raise
 
     def _js_click(self, element: WebElement) -> None:
         self.driver.execute_script('arguments[0].click();', element)
@@ -511,10 +550,8 @@ class GeminiAnunciosViaFlow:
             
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
             
-            # --- SEPARAÇÃO DE LÓGICA: IMAGEM VS VÍDEO ---
             is_video = caminho.suffix.lower() in ['.mov', '.mp4', '.avi', '.mkv', '.webm']
             
-            # --- PAUSA CRUCIAL DE CHOQUE DE REALIDADE (Só para vídeos) ---
             if is_video:
                 time.sleep(3.0) 
 
@@ -541,7 +578,18 @@ class GeminiAnunciosViaFlow:
             textarea = self._obter_textarea_prompt()
             
             textarea.click()
-            textarea.send_keys(prompt)
+            time.sleep(0.2)
+            
+            try:
+                # Tenta colar super rápido usando a área de transferência (suporta EMOJIS nativamente)
+                pyperclip.copy(prompt)
+                textarea.send_keys(Keys.CONTROL, "v")
+                time.sleep(0.5)
+            except Exception:
+                # Fallback removendo emojis caso o pyperclip falhe (Evita erro do ChromeDriver BMP)
+                prompt_seguro = re.sub(r'[^\u0000-\uFFFF]', '', prompt)
+                textarea.send_keys(prompt_seguro)
+            
             _log('Prompt digitado')
             
             self._scroll_chat_ate_fim()
@@ -566,7 +614,6 @@ class GeminiAnunciosViaFlow:
                 
             _log('Prompt submetido')
             
-            # --- BLINDAGEM CONTRA O ERRO 13 ("SOMETHING WENT WRONG") ---
             fim_erro = time.time() + 4
             while time.time() < fim_erro:
                 try:
@@ -929,12 +976,9 @@ class GeminiAnunciosViaFlow:
         self,
         arquivos: List[Path],
         dados_produto: Dict,
+        arquivo_ref: Optional[Path] = None,
+        qtd_cenas: int = 3
     ) -> str:
-        modelo = dados_produto.get('modelo', 'Produto')
-        tom = dados_produto.get('tom', 'Feminino, persuasivo e comercial')
-        duracao = dados_produto.get('duracao', '15')
-        nome_produto = dados_produto.get('nome_produto', 'Produto em destaque')
-        beneficios = dados_produto.get('beneficios', 'Prático e indispensável')
         id_pasta = dados_produto.get('nome', '1')
         
         self._scroll_chat_ate_fim()
@@ -955,17 +999,79 @@ class GeminiAnunciosViaFlow:
                 _log(f'Aviso: Arquivo de contexto não encontrado: {caminho.name}')
                 continue
             self.anexar_arquivo_local(caminho)
-            
-        prompt_execucao = _TEMPLATE_ROTEIRO_3_CENAS.format(
-            tom=tom,
-            duracao=duracao,
-            nome_produto=nome_produto,
-            beneficios=beneficios
+
+        texto_referencia_dinamico = "Nenhuma referência extra fornecida."
+        if arquivo_ref:
+            extensao = str(arquivo_ref).lower()
+            if extensao.endswith(('.mp4', '.mov', '.webm', '.avi')):
+                texto_referencia_dinamico = "O vídeo com fala validada que deve ser usado como base."
+            else:
+                texto_referencia_dinamico = "Outra imagem com a descrição detalhada que deve ser usada para compor os detalhes das explicacoes do produto."
+
+        prompt_execucao = _TEMPLATE_ROTEIRO_EXECUCAO.format(
+            qtd_cenas=qtd_cenas,
+            texto_referencia_dinamico=texto_referencia_dinamico
         )
         
         prompt_execucao_linear = " ".join(prompt_execucao.split())
         
-        _log("Solicitando geração do roteiro em 3 cenas...")
+        _log(f"Solicitando geração do roteiro em {qtd_cenas} cenas...")
         resposta = self.enviar_prompt(prompt_execucao_linear, timeout=90, aguardar_resposta=True)
         
         return resposta
+
+    # =========================================================================
+    # AVALIAÇÃO DE VARIANTES (DIRETOR DE ARTE) VIA SELENIUM WEB
+    # =========================================================================
+    def avaliar_melhor_variante_de_video(self, videos_720p: List[Path], roteiro: str) -> Path:
+        """
+        Sobe as variantes 720p na interface Web do Gemini e pede para escolher a melhor.
+        """
+        if not videos_720p:
+            raise ValueError("Nenhum vídeo fornecido para avaliação.")
+            
+        if len(videos_720p) == 1:
+            _log(f"Apenas uma variante detectada ({videos_720p[0].name}). Pulando júri.")
+            return videos_720p[0]
+
+        _log(f"Iniciando JÚRI DE DIREÇÃO DE ARTE para {len(videos_720p)} variantes (720p)...")
+        self.abrir_novo_chat_limpo()
+        
+        for video in videos_720p:
+            if video.exists():
+                self.anexar_arquivo_local(video)
+
+        prompt_juri = (
+            f"Você é um Diretor de Arte sênior especialista em TikTok Ads. "
+            f"Analise estes {len(videos_720p)} vídeos lado a lado que foram gerados "
+            f"a partir do roteiro abaixo:\n\n"
+            f"--- ROTEIRO ---\n{roteiro}\n----------------\n\n"
+            f"Escolha qual variante possui a melhor fluidez, movimentos mais naturais "
+            f"e menor distorção visual.\n"
+            f"IMPORTANTE: Você deve responder APENAS com o NOME EXATO do arquivo vencedor. "
+            f"Exemplo de resposta: video_candidato_final.mp4\n"
+            f"Não escreva justificativas. Não use aspas ou marcações."
+        )
+
+        _log("Solicitando a decisão ao Gemini...")
+        resposta_ia = self.enviar_prompt(prompt_juri, timeout=120, aguardar_resposta=True)
+
+        if not resposta_ia or "TIMEOUT" in resposta_ia or "ERRO" in resposta_ia:
+            _log(f"Aviso: O Gemini falhou em avaliar ({resposta_ia}). Assumindo a Variante 1.")
+            return videos_720p[0]
+
+        resposta_limpa = resposta_ia.strip().replace("`", "").replace('"', "").replace("'", "")
+        _log(f"Resposta do Diretor de Arte: {resposta_limpa}")
+
+        for video in videos_720p:
+            if video.name.lower() in resposta_limpa.lower():
+                _log(f"🎉 Variante eleita: {video.name}")
+                return video
+                
+        for video in videos_720p:
+            if video.stem.lower() in resposta_limpa.lower():
+                _log(f"🎉 Variante eleita (pelo radical): {video.name}")
+                return video
+
+        _log(f"Aviso: Não foi possível casar a resposta '{resposta_limpa}' com os arquivos. Assumindo Variante 1.")
+        return videos_720p[0]

@@ -679,7 +679,7 @@ class GoogleFlowAutomation:
             
             time.sleep(1.0) 
 
-            _log("Procurando opção 720p...")
+            _log("Procurando option 720p...")
             xpath_720p = "//button[@role='menuitem'][.//span[text()='720p'] and .//span[contains(.,'Tamanho original')]]"
             try:
                 btn_720 = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_720p)))
@@ -738,17 +738,18 @@ def _remover_emojis(texto: str) -> str:
     return padrao_emoji.sub(r'', texto)
 
 
-def ler_e_separar_cenas(caminho_roteiro: Path) -> List[str]:
+def ler_e_separar_cenas(caminho_roteiro: Path, qtd_cenas: int = 3) -> List[str]:
     if not caminho_roteiro.exists():
         raise FileNotFoundError(f"Arquivo de roteiro não encontrado: {caminho_roteiro}")
         
     conteudo = caminho_roteiro.read_text(encoding="utf-8")
     
-    padrao = re.compile(r"\[CENA \d\](.*?)(?=\[CENA \d\]|$)", re.DOTALL | re.IGNORECASE)
+    padrao = re.compile(r"\[CENA \d+\](.*?)(?=\[CENA \d+\]|$)", re.DOTALL | re.IGNORECASE)
     matches = padrao.findall(conteudo)
     
     cenas = []
-    for m in matches:
+    # Limita rigorosamente a extração ao número de cenas solicitadas
+    for m in matches[:qtd_cenas]:
         cena_limpa = m.strip()
         if cena_limpa:
             # SANITIZAÇÃO: Remove todos os emojis do texto da cena!
