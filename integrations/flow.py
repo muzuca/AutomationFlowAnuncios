@@ -1,6 +1,6 @@
 # arquivo: integrations/flow.py
 # descricao: Fachada de integracao com o Google Flow (Humble) para gerar videos
-# a partir do roteiro de 3 cenas. Blindado com lógica nativa do humble_client.py.
+# a partir do roteiro de 3 cenas. Blindado com lógica nativa do humble_client.py e Retry Local.
 
 from __future__ import annotations
 
@@ -370,71 +370,82 @@ class GoogleFlowAutomation:
             return ""
 
     def enviar_prompt_e_aguardar(self, prompt: str, timeout_geracao: int = 420) -> bool:
-        _log("[FLOW-IA] Preenchendo prompt (Colando com Pyperclip)...")
-        self._fechar_modais_intrusivos() # Limpeza final para garantir campo interagível
-
-        try:
-            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-            time.sleep(0.2)
-            
-            prompt_linear = " ".join(prompt.split())
-            
-            box = self._wait_visible(
-                By.XPATH,
-                "//div[@role='textbox' and @contenteditable='true']",
-                timeout=20,
-                descricao="campo prompt (Slate.js)",
-            )
-
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", box)
-            time.sleep(0.3)
+        """
+        Versão RESILIENTE: Tenta gerar o vídeo até 3 vezes no mesmo login se o card falhar.
+        """
+        for tentativa_local in range(1, 4):
+            _log(f"[FLOW-IA] Iniciando tentativa local {tentativa_local}/3 para gerar esta cena...")
+            self._fechar_modais_intrusivos()
 
             try:
-                self.driver.execute_script("arguments[0].focus();", box)
-                self.driver.execute_script("arguments[0].click();", box)
-            except Exception:
-                # Se falhar o foco, o modal intrusivo pode estar bloqueando. Tenta remoção forçada.
+                # Se for retentativa, limpa o estado para nova submissão
+                if tentativa_local > 1:
+                    _log("🔄 Retentando: Limpando projeto anterior para nova submissão no mesmo login...")
+                    self._projeto_criado = False
+                    self._modelo_configurado = False
+                    self.clicar_novo_projeto()
+                    self.configurar_parametros_video()
+
+                ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                time.sleep(0.2)
+                
+                prompt_linear = " ".join(prompt.split())
+                
+                box = self._wait_visible(
+                    By.XPATH,
+                    "//div[@role='textbox' and @contenteditable='true']",
+                    timeout=20,
+                    descricao="campo prompt (Slate.js)",
+                )
+
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", box)
+                time.sleep(0.3)
+
                 try:
-                    overlays = self.driver.find_elements(
-                        By.XPATH,
-                        "//div[contains(@class,'sc-d23b167b-0') or contains(@class,'overlay') or contains(@class,'hTyrgE')]"
-                    )
-                    for o in overlays:
-                        self.driver.execute_script("arguments[0].remove();", o)
-                    time.sleep(0.3)
                     self.driver.execute_script("arguments[0].focus();", box)
                     self.driver.execute_script("arguments[0].click();", box)
                 except Exception:
-                    pass
+                    # Se falhar o foco, tenta remoção forçada de overlays
+                    try:
+                        overlays = self.driver.find_elements(By.XPATH, "//div[contains(@class,'overlay') or @role='dialog']")
+                        for o in overlays: self.driver.execute_script("arguments[0].remove();", o)
+                        time.sleep(0.3)
+                        self.driver.execute_script("arguments[0].focus(); arguments[0].click();", box)
+                    except Exception: pass
 
-            time.sleep(0.4)
+                time.sleep(0.4)
 
-            try:
-                box.send_keys(Keys.CONTROL, "a")
-                time.sleep(0.2)
-            except Exception:
-                pass
+                try:
+                    box.send_keys(Keys.CONTROL, "a")
+                    box.send_keys(Keys.BACKSPACE)
+                    time.sleep(0.2)
+                except Exception: pass
 
-            pyperclip.copy(prompt_linear)
-            box.send_keys(Keys.CONTROL, "v")
-            time.sleep(1.2)
+                pyperclip.copy(prompt_linear)
+                box.send_keys(Keys.CONTROL, "v")
+                time.sleep(1.2)
 
-            depois = self._ler_texto_prompt_box(box)
-            _log(f"Tamanho esperado={len(prompt_linear)} | colado={len(depois)}")
-            
-            trecho_ref = prompt_linear[:50].strip()
-            if trecho_ref and trecho_ref not in depois:
-                _log("AVISO: trecho inicial do prompt não confirmado na leitura, seguindo mesmo assim.")
+                depois = self._ler_texto_prompt_box(box)
+                _log(f"Tamanho esperado={len(prompt_linear)} | colado={len(depois)}")
+                
+                _log('Pressionando ENTER para submeter...')
+                box.send_keys(Keys.ENTER)
+                time.sleep(2)
+                
+                sucesso = self._aguardar_geracao_tracking_inline(prompt_linear, timeout_geracao)
+                
+                if sucesso:
+                    return True
+                else:
+                    _log(f"⚠️ Card indicou erro na tentativa {tentativa_local}. Retentando localmente...")
+                    time.sleep(2)
+                    continue
 
-            _log('Pressionando ENTER para submeter...')
-            box.send_keys(Keys.ENTER)
-            time.sleep(2)
-            
-            return self._aguardar_geracao_tracking_inline(prompt_linear, timeout_geracao)
-
-        except Exception as e:
-            _log(f'Erro durante a geração do vídeo/envio de prompt: {e}')
-            return False
+            except Exception as e:
+                _log(f'Erro na tentativa local {tentativa_local}: {e}')
+                if tentativa_local == 3: return False
+                time.sleep(2)
+        return False
 
     def _listar_cards(self):
         return self.driver.find_elements(By.XPATH, "//*[@data-tile-id]")
@@ -455,8 +466,7 @@ class GoogleFlowAutomation:
         if not tile_id: return None
         try:
             return self.driver.find_element(By.XPATH, f"//*[@data-tile-id='{tile_id}']")
-        except Exception:
-            return None
+        except Exception: return None
 
     def _encontrar_card_por_prompt(self, prompt: str):
         trecho = prompt[:40].strip()
@@ -464,10 +474,8 @@ class GoogleFlowAutomation:
         for c in cards:
             try:
                 txt_bruto = self.driver.execute_script("return arguments[0].textContent;", c)
-                if txt_bruto and trecho in txt_bruto:
-                    return c
-            except Exception:
-                pass
+                if txt_bruto and trecho in txt_bruto: return c
+            except Exception: pass
         return None
 
     def _card_mais_recente(self):
@@ -487,8 +495,7 @@ class GoogleFlowAutomation:
         while time.time() < fim:
             if not self.ultimo_tile_id_gerado:
                 card = self._encontrar_card_por_prompt(prompt) or self._card_mais_recente()
-                if card:
-                    self.ultimo_tile_id_gerado = self._obter_tile_id(card)
+                if card: self.ultimo_tile_id_gerado = self._obter_tile_id(card)
                 
                 if not self.ultimo_tile_id_gerado:
                     self._print_progress_inline("[FLOW-IA] Gerando vídeo... aguardando card aparecer")
@@ -498,7 +505,7 @@ class GoogleFlowAutomation:
                     if linha_progresso_ativa:
                         self._finish_progress_inline()
                         linha_progresso_ativa = False
-                    _log(f"[FLOW-IA] Tile ID rastreado: {self.ultimo_tile_id_gerado}")
+                    _log(f"Tile ID rastreado: {self.ultimo_tile_id_gerado}")
 
             base_xpath = f"//*[@data-tile-id='{self.ultimo_tile_id_gerado}']"
 
@@ -513,10 +520,8 @@ class GoogleFlowAutomation:
             try:
                 sucesso = self.driver.find_elements(By.XPATH, f"{base_xpath}//video | {base_xpath}//i[contains(text(), 'play_circle')]")
                 if sucesso:
-                    if linha_progresso_ativa:
-                        self._finish_progress_inline("[FLOW-IA] Gerando vídeo... 100% | pronto!")
-                    else:
-                        _log("✔ Vídeo pronto e disponível para download.")
+                    if linha_progresso_ativa: self._finish_progress_inline("[FLOW-IA] Gerando vídeo... 100% | pronto!")
+                    else: _log("✔ Vídeo pronto e disponível para download.")
                     return True
             except Exception: pass
 
@@ -568,11 +573,9 @@ class GoogleFlowAutomation:
                     if linha_progresso_ativa: self._finish_progress_inline()
                     _log("❌ Card estagnado por muito tempo. Assumindo erro.")
                     return False
-
             time.sleep(2)
 
-        if linha_progresso_ativa:
-            self._finish_progress_inline()
+        if linha_progresso_ativa: self._finish_progress_inline()
         _log("Timeout esgotado na geração do vídeo.")
         return False
 
@@ -585,9 +588,8 @@ class GoogleFlowAutomation:
                 allow_btn = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Allow')]")
                 if allow_btn and allow_btn[0].is_displayed():
                     self._js_click(allow_btn[0])
-                time.sleep(1.5)
-        except Exception:
-            pass
+                    time.sleep(1.5)
+        except Exception: pass
 
     def _snapshot_mp4s(self, diretorio: Path) -> set[str]:
         diretorio.mkdir(parents=True, exist_ok=True)
@@ -596,74 +598,49 @@ class GoogleFlowAutomation:
     def _esperar_download_mp4(self, download_dir: Path, antes: set[str], timeout=180) -> Path:
         fim = time.time() + timeout
         ultimo_temp = None
-
         while time.time() < fim:
             crdownloads = list(download_dir.glob("*.crdownload"))
             novos_mp4 = [p for p in download_dir.glob("*.mp4") if p.name not in antes]
-
             if novos_mp4 and not crdownloads:
                 novos_mp4.sort(key=lambda p: p.stat().st_mtime, reverse=True)
                 arquivo = novos_mp4[0]
                 _log(f"✔ Download concluído internamente no Windows: {arquivo.name}")
                 return arquivo
-
             if crdownloads:
                 crdownloads.sort(key=lambda p: p.stat().st_mtime, reverse=True)
                 atual = crdownloads[0]
                 if ultimo_temp != atual.name:
                     _log(f"ℹ Baixando: {atual.name}")
                     ultimo_temp = atual.name
-
             time.sleep(1)
-
         raise TimeoutException("Timeout aguardando arquivo .mp4 no diretório.")
 
     def baixar_video_gerado(self, caminho_destino: Path) -> bool:
         _log(f'Iniciando download do vídeo para: {caminho_destino.name}')
         caminho_destino = Path(caminho_destino)
         download_dir = Path.home() / "Downloads"
-        
         try:
             _log("Abrindo página do vídeo pronto...")
             card = None
-            if self.ultimo_tile_id_gerado:
-                card = self._encontrar_card_por_tile_id(self.ultimo_tile_id_gerado)
-                
-            if not card:
-                card = self._card_mais_recente()
-                
+            if self.ultimo_tile_id_gerado: card = self._encontrar_card_por_tile_id(self.ultimo_tile_id_gerado)
+            if not card: card = self._card_mais_recente()
             if not card:
                 _log("ERRO: Não encontrei card do vídeo pronto para clicar.")
                 return False
-
             alvo_click = None
-            try:
-                alvo_click = card.find_element(By.XPATH, ".//button[contains(@class,'sc-d64366c4-1') and .//video]")
-                _log("Botão contendo <video> encontrado para clique.")
+            try: alvo_click = card.find_element(By.XPATH, ".//button[contains(@class,'sc-d64366c4-1') and .//video]")
             except Exception: pass
-
             if alvo_click is None:
-                try:
-                    alvo_click = card.find_element(By.XPATH, ".//video")
-                    _log("<video> encontrado para clique direto.")
+                try: alvo_click = card.find_element(By.XPATH, ".//video")
                 except Exception: pass
-                
             if alvo_click is None:
                 _log("ERRO: Encontrei o card, mas não achei elemento clicável (botão/vídeo).")
                 return False
-
             self.driver.execute_script("arguments[0].scrollIntoView({block:'center', inline:'center'});", alvo_click)
             time.sleep(0.4)
-            try:
-                alvo_click.click()
-                _log("✔ Clique normal no card/vídeo disparado.")
-            except Exception:
-                _log("ℹ Clique normal falhou, tentando clique via JS...")
-                self._js_click(alvo_click)
-                _log("✔ Clique via JS no card/vídeo disparado.")
-            
+            try: alvo_click.click()
+            except Exception: self._js_click(alvo_click)
             time.sleep(4.0)
-
             _log("Procurando botão 'Baixar'...")
             xpath_baixar = "//button[.//i[text()='download'] and .//div[contains(.,'Baixar')]]"
             try:
@@ -671,64 +648,43 @@ class GoogleFlowAutomation:
                 btn_baixar.click()
             except TimeoutException:
                 btn_baixar = self.driver.find_elements(By.XPATH, "//button[@aria-label='Download video'] | //button[contains(@aria-label, 'Download')] | //button[.//i[text()='download']]")
-                if btn_baixar:
-                    self._js_click(btn_baixar[-1])
-                else:
-                    _log("ERRO: Botão de baixar não encontrado.")
-                    return False
-            
+                if btn_baixar: self._js_click(btn_baixar[-1])
+                else: return False
             time.sleep(1.0) 
-
             _log("Procurando option 720p...")
             xpath_720p = "//button[@role='menuitem'][.//span[text()='720p'] and .//span[contains(.,'Tamanho original')]]"
             try:
                 btn_720 = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_720p)))
                 btn_720.click()
             except TimeoutException:
-                _log("Aviso: '720p' com Tamanho original não encontrado. Tentando fallback...")
                 xpath_fallback = "//button[@role='menuitem'][contains(., '720p') or contains(., '1080p')]"
                 try:
                     btn_fallback = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_fallback)))
                     btn_fallback.click()
                 except TimeoutException:
-                    _log("Aviso: Falha ao encontrar menuitem de resolução. Clicando na primeira opção disponível.")
                     btn_qualquer = self.driver.find_elements(By.XPATH, "//button[@role='menuitem']")
-                    if btn_qualquer:
-                        self._js_click(btn_qualquer[0])
-                    else:
-                        _log("ERRO: Nenhuma opção de resolução encontrada no menu.")
-                        return False
-
+                    if btn_qualquer: self._js_click(btn_qualquer[0])
+                    else: return False
             antes = self._snapshot_mp4s(download_dir)
             self.resolver_permissoes_drive()
-            
             _log('Aguardando o arquivo terminar de baixar no Windows...')
             arquivo_baixado = self._esperar_download_mp4(download_dir, antes)
-            
-            if caminho_destino.exists():
-                caminho_destino.unlink()
-                
+            if caminho_destino.exists(): caminho_destino.unlink()
             shutil.move(str(arquivo_baixado), str(caminho_destino))
             _log(f'✅ Vídeo baixado com sucesso: {caminho_destino.name}')
-            
-            _log("Voltando para a tela de prompts (mantendo o projeto aberto)...")
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-            time.sleep(0.5)
-            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-            time.sleep(1.5)
-
+            time.sleep(0.5); ActionChains(self.driver).send_keys(Keys.ESCAPE).perform(); time.sleep(1.5)
             return True
-
         except Exception as e:
-            _log(f'Erro no download nativo do Flow: {e}')
+            _log(f'Erro no download: {e}')
             return False
 
 
 # =====================================================================
-#   REMOÇÃO DE EMOJIS (LIMPEZA DO PROMPT ANTES DE ENVIAR)
+#   FUNÇÕES AUXILIARES DE PROCESSAMENTO (TEXTO)
 # =====================================================================
+
 def _remover_emojis(texto: str) -> str:
-    """Remove símbolos e emojis do texto para evitar erros de renderização no Flow."""
     padrao_emoji = re.compile(
         r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
         r'\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF'
@@ -738,24 +694,44 @@ def _remover_emojis(texto: str) -> str:
     return padrao_emoji.sub(r'', texto)
 
 
-def ler_e_separar_cenas(caminho_roteiro: Path, qtd_cenas: int = 3) -> List[str]:
-    if not caminho_roteiro.exists():
-        raise FileNotFoundError(f"Arquivo de roteiro não encontrado: {caminho_roteiro}")
+def ler_e_separar_cenas(caminho_txt: Path, qtd_cenas: int = 3) -> List[str]:
+    """
+    Lê o arquivo de roteiro e separa o conteúdo de cada cena baseado nas tags [Cena X].
+    Suporta formatos [CENA 1], [Cena 1] ou [Cena 1: Título].
+    """
+    if not caminho_txt.exists():
+        return []
+
+    conteudo = caminho_txt.read_text(encoding='utf-8')
+    
+    # Remove lixos comuns da interface do Gemini que podem vir no início do arquivo
+    conteudo = conteudo.replace("Show thinking", "").replace("Gemini said", "").strip()
+    
+    cenas_encontradas = []
+    
+    for i in range(1, qtd_cenas + 1):
+        # Regex que busca por "[Cena i" ou "[CENA i" (ignora maiúsculas/minúsculas e aceita texto depois do número)
+        padrao_inicio = rf"\[[Cc][Ee][Nn][Aa]\s*{i}.*?\]"
+        padrao_proxima = rf"\[[Cc][Ee][Nn][Aa]\s*{i+1}.*?\]"
         
-    conteudo = caminho_roteiro.read_text(encoding="utf-8")
-    
-    padrao = re.compile(r"\[CENA \d+\](.*?)(?=\[CENA \d+\]|$)", re.DOTALL | re.IGNORECASE)
-    matches = padrao.findall(conteudo)
-    
-    cenas = []
-    # Limita rigorosamente a extração ao número de cenas solicitadas
-    for m in matches[:qtd_cenas]:
-        cena_limpa = m.strip()
-        if cena_limpa:
-            # SANITIZAÇÃO: Remove todos os emojis do texto da cena!
-            cena_sem_emoji = _remover_emojis(cena_limpa)
-            # Remove espaços duplos criados pela ausência dos emojis
-            cena_sem_emoji = " ".join(cena_sem_emoji.split())
-            cenas.append(cena_sem_emoji)
+        # Se for a última cena, tentamos achar o marcador de Legenda como fim
+        if i == qtd_cenas:
+            padrao_proxima = r"\[[Ll]egenda.*?\]"
+
+        # Localiza o início da cena atual
+        match_inicio = re.search(padrao_inicio, conteudo)
+        
+        if match_inicio:
+            inicio_pos = match_inicio.end()
+            # Busca onde começa a próxima cena (ou a legenda) para saber onde parar
+            match_fim = re.search(padrao_proxima, conteudo[inicio_pos:])
             
-    return cenas
+            if match_fim:
+                texto_cena = conteudo[inicio_pos : inicio_pos + match_fim.start()]
+            else:
+                # Se não achou a próxima tag, pega até o fim do arquivo
+                texto_cena = conteudo[inicio_pos:]
+            
+            cenas_encontradas.append(texto_cena.strip())
+
+    return cenas_encontradas

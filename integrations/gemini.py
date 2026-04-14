@@ -28,58 +28,75 @@ EXTENSOES_IMAGEM = ('.jpg', '.jpeg', '.png', '.webp')
 # ──────────────────────────────────────────────────────────────────────────────
 
 _TEMPLATE_TREINO_MESTRE = """
-Você é o 'Especialista em Geração de Anúncios para o TikTok Shop'. Sua missão é atuar como um ENGENHEIRO DE ROTEIROS TIKTOK SHOP (MASTER FULL).
-Sua tarefa é interpretar fotos e vídeos para criar roteiros técnicos, onde cada cena tem exatos 8 segundos.
+INSTRUÇÃO DE SISTEMA: ENGENHEIRO DE ROTEIROS TIKTOK SHOP (MASTER FULL)
+
+Você é um especialista em Social Commerce. Sua tarefa é transformar fotos e vídeos em 3 roteiros técnicos de 8 segundos cada.
 
 1. REGRAS DE OURO (NÃO NEGOCIÁVEIS)
-• MÉTRICA: Cada fala DEVE ter entre 24 e 25 palavras (para bater exatamente 8 segundos por cena).
+• MÉTRICA: Cada fala DEVE ter entre 24 e 25 palavras (para bater exatamente 8 segundos).
 • TOM: Sotaque Carioca, energia máxima, "smiling voice", ritmo acelerado.
 • VISUAL: Use sempre "REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO".
 • MOVIMENTO SEGURO (ANTI-GLITCH): Câmera 100% estática (Locked static shot. NO camera movement). Mãos e braços devem permanecer IMÓVEIS segurando os produtos, exatamente como na foto original. NUNCA crie ações de apontar se as mãos estiverem ocupadas (isso gera uma "terceira mão" e violações). Foque os movimentos APENAS em expressões faciais sutis (sorrisos, piscar de olhos, respiração natural) e na fala da modelo.
-• PREÇO (REGRA DE PRECISÃO): No áudio, arredonde SEMPRE para o próximo número inteiro imediatamente acima (Ex: R$ 30,40 vira "menos de trinta e um reais"; R$ 50,90 vira "menos de cinquenta e um reais"). A extração do nome, preço e benefícios do produto deve ser feita DIRETAMENTE da leitura das imagens enviadas.
-• ESTRUTURA NARRATIVA: O anúncio todo deve garantir um gancho forte na primeira cena, falar de qualidades/benefícios no meio, e fazer a chamada para ação (CTA) com o preço na última cena. Proibido começar com "Para tudo" ou "Gente olha". Comece com o benefício direto.
-• INDEPENDÊNCIA DE CENA (FLOW): Cada cena é tratada pela IA de vídeo como um arquivo único. É PROIBIDO usar palavras como "same", "repeat", "equal to previous". Repita integralmente todas as descrições técnicas de áudio, voz e câmera em TODAS as cenas.
-• FORMATAÇÃO (TEXTO CORRIDO): Responda APENAS com o texto corrido de cada cena logo abaixo da sua respectiva tag [CENA X]. É ESTRITAMENTE PROIBIDO usar caixas/blocos de código (como ```text ou ```). NÃO use negritos ou marcações. Entregue o texto puro para que um robô possa ler.
+• PREÇO (REGRA DE PRECISÃO): No áudio, arredonde SEMPRE para o próximo número inteiro imediatamente acima (Ex: R$ 30,40 vira "menos de trinta e um reais"; R$ 50,90 vira "menos de cinquenta e um reais"). Na legenda, PROIBIDO números ou frete.
+• GATILHOS: Proibido começar com "Para tudo" ou "Gente olha". Comece com o benefício direto.
+• INDEPENDÊNCIA DE CENA (FLOW): Cada cena é tratada pela IA como um arquivo único. É PROIBIDO usar palavras como "same", "repeat", "equal to previous" ou referências a outras cenas. Repita integralmente todas as descrições técnicas de áudio, voz e câmera em todas as cenas/prompts.
+• FORMATAÇÃO (CAIXAS DE TEXTO): Os prompts de cada cena, bem como as legendas/hashtags, DEVEM ser entregues em texto direto no chat. NUNCA escreva a frase "PROMPT TÉCNICO:" em nenhum lugar. O texto deve começar diretamente na instrução de transformação ("Transform the input image...").
 
-2. PROTOCOLO DE SAÍDA (EXEMPLO DE ESTRUTURA)
-Você deve entregar a resposta seguindo EXATAMENTE esta estrutura em texto puro:
+2. PROTOCOLO DE SAÍDA
+Você deve entregar a resposta seguindo EXATAMENTE este modelo de estrutura em texto puro, direto no chat. A descrição da cena fica acima do prompt, e o prompt fica logo abaixo:
 
-[CENA 1]
+[Cena 1: Título da Cena - Breve resumo da emoção da modelo]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — 1. Model keeps hands completely still, firmly holding the items exactly as in the photo. 2. Subtle facial expression of joyful shock and smiling. 3. Very subtle natural breathing.
-Model voiceover (Ana/Lucas) says: "[Texto de gancho com exatas 24-25 palavras]"
+ACTION SEQUENCE — Model keeps hands completely still, firmly holding the items exactly as in the photo. Subtle facial expression of joyful shock and smiling. 3️⃣ Very subtle natural breathing.
+Model voiceover says: "[Texto exato de 24-25 palavras]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
-[CENA 2]
+[Cena 2: Título da Cena - Breve resumo focado nos benefícios e qualidade do produto]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — 1. Model keeps hands completely still, firmly holding the items exactly as in the photo. 2. NO camera rotation or zoom. 3. Model smiles and speaks naturally to the camera.
-Model voiceover (Ana/Lucas) says: "[Texto de qualidades/benefícios com exatas 24-25 palavras]"
+ACTION SEQUENCE — Model keeps hands completely still, firmly holding the items exactly as in the photo. 2️⃣ NO camera rotation or zoom. 3️⃣ Model smiles and speaks naturally to the camera.
+Model voiceover says: "[Texto exato de 24-25 palavras focando em benefícios]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
-[CENA 3]
+[Cena 3: Título da Cena - Breve resumo sobre o Call to Action sem o uso de gestos com as mãos]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — 1. Model keeps hands completely still, holding the items. Do NOT point or move arms. 2. Friendly wink and wide smile. 3. NO glitches.
-Model voiceover (Ana/Lucas) says: "[Texto de CTA e preço com exatas 24-25 palavras]"
+ACTION SEQUENCE — Model keeps hands completely still, holding the items. Do NOT point or move arms. 2️Friendly wink and wide smile. 3️⃣ NO glitches.
+Model voiceover says: "[Texto de 24-25 palavras com preço arredondado e CTA do carrinho]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
+
+[Legenda e Hashtags]
+[Texto curto com 10 palavras, direto, SEM preços, SEM frete, SEM link. Use emojis.]
+#hashtag1 #hashtag2 #tiktokshop
+
+1. EXEMPLO DE CONTAGEM PARA VALIDAR (25 PALAVRAS):
+"Esse kit maravilhoso sai por menos de cinquenta e um reais hoje no TikTok Shop então corre agora no carrinho pra garantir o seu antes que acabe!"
+
+DIRETRIZ FINAL: 
+Quando o usuário enviar arquivos, processe as informações e responda APENAS seguindo a estrutura visual acima. 
+Assegure-se de que cada prompt e a legenda estejam escrivos em texto puro, sem emojis na sequencia do chat. 
+NUNCA invente movimentos de mãos se o modelo já estiver segurando algo na foto de referência.
 
 Confirme brevemente que entendeu a função e aguarde o comando com os arquivos.
 """
 
-_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo anúncio de {qtd_cenas} cenas com base nos arquivos em anexo. 
-Na fala devemos garantir o gancho na cena 1, falar as qualidades e benefícios do produto no meio, fala do preco e o cta no final. 
+_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo roteiro para um anúncio de {qtd_cenas} cenas do produto que está sendo apresentado nos arquivos em anexo. 
+Na fala devemos garantir o gancho na cena 1, falar as qualidades e benefícios do produto no meio e fala do preço e o CTA no final. 
 
 Estou enviando em anexo:
-- A foto do produto com a modelo apresentando (POV)
-- Uma imagem com o nome do produto e o preco
+- A foto do produto sendo apresentado em estilo POV (apenas duas mãos segurando o produto)
+- Uma imagem com o nome do produto e o preço
 - {texto_referencia_dinamico}
 
-Extraia o nome do produto, o preço e os detalhes diretamente da leitura das imagens/vídeo.
+Extraia o nome do produto, o preço e os detalhes diretamente da leitura/transcrição das imagens/vídeo.
+
+DIRETRIZES POV (NÃO NEGOCIÁVEIS):
+Como a filmagem é em POV (Point of View), os prompts técnicos DEVEM refletir isso. 
+Especifique claramente nos prompts que a câmera é POV e mostre apenas as mãos. É ESTRITAMENTE PROIBIDO gerar rostos, cabeças, corpos inteiros, pessoas ao fundo ou qualquer elemento que não esteja na imagem de referência POV. Foque apenas em movimentos sutis de respiração ou da própria luz/cenário, mantendo as mãos 100% estáticas.
 
 Siga ESTRITAMENTE o Protocolo de Saída definido no seu treinamento em texto puro corrido, usando as tags [CENA 1], [CENA 2], etc.
-Lembre-se da regra de ouro: Câmera 100% estática, modelo imóvel sem mover braços, preço arredondado para cima, exatas 24-25 palavras por cena.
+Lembre-se da regra de ouro: Câmera 100% estática, mãos completamente imóveis (anti-glitch), preço arredondado para cima, exatas 24-25 palavras por cena.
 Responda APENAS com as {qtd_cenas} cenas estruturadas, nada mais.
 """
 
@@ -108,6 +125,72 @@ class GeminiAnunciosViaFlow:
                 _log(f'🚨 URL redirecionada para a página inicial ({self.driver.current_url}). Conta inoperante.')
                 raise Exception("Conta redirecionada para fora do Gemini App. Trocando de conta.")
 
+    def _forcar_modelo_pro(self) -> None:
+        """Procura o seletor de modelo do Gemini e força a opção Pro, evitando Fast e Thinking."""
+        _log('Verificando/Forçando modelo Pro...')
+        
+        # Pausa inicial vital: Dá tempo para o Angular renderizar o botão após criar o chat
+        time.sleep(2.0) 
+        
+        for tentativa in range(1, 4):
+            try:
+                # 1. Procura o botão de abrir o menu
+                menu_btn_elements = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="bard-mode-menu-button"], button[aria-label="Open mode picker"]')
+                if not menu_btn_elements:
+                    _log(f'Botão de modelo ainda não apareceu (Tentativa {tentativa}/3)...')
+                    time.sleep(1.5)
+                    continue 
+
+                menu_btn = menu_btn_elements[0]
+                
+                # 2. Lê o texto do botão para ver se já estamos no Pro
+                texto_atual = (menu_btn.text or '').strip().lower()
+                if 'pro' in texto_atual and 'thinking' not in texto_atual and 'pensamento' not in texto_atual:
+                    _log('✅ Modelo Pro já está ativo.')
+                    return # Sucesso, sai da função
+                    
+                _log(f'Modelo atual é "{texto_atual}". Abrindo menu de seleção (Tentativa {tentativa}/3)...')
+                
+                # Traz o botão pro meio da tela e clica
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_btn)
+                time.sleep(0.5)
+                self._js_click(menu_btn)
+                time.sleep(1.5) # Espera a animação do menu abrir
+                
+                # 3. Procura a opção Pro exata
+                seletores_pro = [
+                    'button[data-mode-id="e6fa609c3fa255c0"]',
+                    'button[data-test-id="bard-mode-option-pro"]'
+                ]
+                
+                clicou_pro = False
+                for seletor in seletores_pro:
+                    opcoes_pro = self.driver.find_elements(By.CSS_SELECTOR, seletor)
+                    for opcao in opcoes_pro:
+                        # Trava de segurança extra
+                        texto_opcao = (opcao.text or '').strip().lower()
+                        if 'thinking' not in texto_opcao and 'pensamento' not in texto_opcao and 'fast' not in texto_opcao:
+                            self._js_click(opcao)
+                            clicou_pro = True
+                            break
+                    if clicou_pro:
+                        break
+
+                if clicou_pro:
+                    time.sleep(1.5) # Espera a interface confirmar e fechar o menu
+                    _log('✅ Modelo Pro selecionado com sucesso.')
+                    return # Missão cumprida, sai da função
+                else:
+                    _log('⚠️ Opção Pro não encontrada no DOM. Fechando menu e recomeçando...')
+                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                    time.sleep(1.0)
+                    
+            except Exception as e:
+                _log(f'⚠️ Erro na interface ao tentar mudar pro Pro ({e}). Tentando novamente...')
+                time.sleep(1.0)
+                
+        _log('🚨 Aviso: Esgotaram as tentativas de forçar o modelo Pro. Seguindo em frente...')
+
     def abrir_novo_chat_limpo(self) -> None:
         self._scroll_chat_ate_fim()
         _log('Criando novo chat nativamente via botão da interface...')
@@ -116,13 +199,11 @@ class GeminiAnunciosViaFlow:
             self.abrir_gemini()
             
         # VALIDAÇÃO AGRESSIVA DE URL (O "Pulo do Gato")
-        # Se por acaso estava no site mas a URL perdeu o "/app", força recarregar.
         if '/app' not in self.driver.current_url:
             _log('Forçando URL principal do Gemini...')
             self.driver.get(self.url_gemini)
             time.sleep(1.5)
             
-            # Se o Google tirou o "/app" de novo, a conta já era.
             if '/app' not in self.driver.current_url:
                 _log(f'🚨 CONTA INOPERANTE! Redirecionou para: {self.driver.current_url}')
                 raise Exception('Conta bloqueada/inoperante. O Gemini redirecionou a URL.')
@@ -166,6 +247,9 @@ class GeminiAnunciosViaFlow:
             self._obter_textarea_prompt()
             self._scroll_chat_ate_fim()
             _log('Novo chat pronto para receber comandos.')
+            
+            # --- NOVO: Força o Gemini para a versão PRO logo após iniciar o chat ---
+            self._forcar_modelo_pro()
             
         except TimeoutException:
             _log('🚨 ERRO RÁPIDO: Campo de prompt não encontrado.')
@@ -818,6 +902,10 @@ class GeminiAnunciosViaFlow:
     ) -> bool:
         caminho_imagem = Path(caminho_imagem)
         _log(f'Validando candidato a produto com Gemini: {caminho_imagem.name}')
+        
+        # --- GARANTIA ABSOLUTA: Força o modelo Pro antes de anexar o primeiro arquivo ---
+        self._forcar_modelo_pro()
+        
         self.anexar_arquivo_local(caminho_imagem)
         prompt_validacao_produto = (
             'A imagem anexada contem um produto fisico claramente visivel e identificavel? '
@@ -927,7 +1015,7 @@ class GeminiAnunciosViaFlow:
                 self._scroll_chat_ate_fim()
                 
                 if tentativa_val > 1:
-                    prompt_validacao = "Não entendi ou houve um erro. Por favor, analise cuidadosamente a imagem anexada acima. Se ela mostrar mãos humanas segurando o produto em primeira pessoa (POV), responda SIM. Caso contrário, NAO. Responda apenas SIM ou NAO."
+                    prompt_validacao = "Não entendi ou houve um erro. Por favor, analise carefully a imagem anexada acima. Se ela mostrar mãos humanas segurando o produto em primeira pessoa (POV), responda SIM. Caso contrário, NAO. Responda apenas SIM ou NAO."
                 else:
                     prompt_validacao = (
                         "Você é um avaliador de anúncios, NÃO um fotógrafo perfeccionista. "

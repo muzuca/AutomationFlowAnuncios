@@ -61,12 +61,12 @@ def fechar_popup_cromado_pos_gemini(driver) -> None:
         log_error('Popup nativo do Chrome permaneceu apos abrir o Gemini')
 
 
-def salvar_ultima_conta_env(index: int) -> None:
-    """Atualiza ou insere a variável LAST_ACCOUNT_INDEX no arquivo .env"""
+def salvar_ultima_conta_env(email: str) -> None:
+    """Atualiza ou insere a variável LAST_ACCOUNT_INDEX no arquivo .env com o EMAIL da conta"""
     try:
         env_path = Path('.env')
         if not env_path.exists():
-            env_path.write_text(f"LAST_ACCOUNT_INDEX={index}\n", encoding='utf-8')
+            env_path.write_text(f"LAST_ACCOUNT_INDEX={email}\n", encoding='utf-8')
             return
         
         lines = env_path.read_text(encoding='utf-8').splitlines()
@@ -74,17 +74,17 @@ def salvar_ultima_conta_env(index: int) -> None:
         new_lines = []
         for line in lines:
             if line.startswith("LAST_ACCOUNT_INDEX="):
-                new_lines.append(f"LAST_ACCOUNT_INDEX={index}")
+                new_lines.append(f"LAST_ACCOUNT_INDEX={email}")
                 found = True
             else:
                 new_lines.append(line)
         
         if not found:
-            new_lines.append(f"LAST_ACCOUNT_INDEX={index}")
+            new_lines.append(f"LAST_ACCOUNT_INDEX={email}")
             
         env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
     except Exception as e:
-        log_error(f"Aviso: Não foi possível salvar o índice da conta no .env: {e}")
+        log_error(f"Aviso: Não foi possível salvar o email da conta no .env: {e}")
 
 
 def main() -> None:
@@ -120,8 +120,16 @@ def main() -> None:
 
         sucesso_absoluto = False
         
-        # Inicia a contagem baseada na última conta salva no .env (ou 0)
-        tentativa_atual = int(os.getenv("LAST_ACCOUNT_INDEX", "0"))
+        # Inicia a contagem baseada no último e-mail salvo no .env
+        ultimo_email = os.getenv("LAST_ACCOUNT_INDEX", "").strip().lower()
+        tentativa_atual = 0
+        
+        if ultimo_email and ultimo_email != "0":
+            for i, acc in enumerate(accounts):
+                if acc.email.strip().lower() == ultimo_email:
+                    tentativa_atual = i
+                    break
+                    
         falhas_consecutivas = 0
 
         # =========================================================================
@@ -145,7 +153,7 @@ def main() -> None:
                 
                 tentativa_atual = 0
                 falhas_consecutivas = 0
-                salvar_ultima_conta_env(0)
+                salvar_ultima_conta_env(accounts[0].email)
 
             # Define qual será o e-mail da vez
             idx_conta = tentativa_atual % len(accounts)
@@ -191,43 +199,52 @@ def main() -> None:
                     url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
                     gemini = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
                     
-                    validada = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=40)
+                    # === SUB-CHECKPOINT: Pula geração do POV se a imagem já existir na pasta ===
+                    caminho_pov_existente = Path(prepared.task.folder_path) / "POV_VALIDADO.png"
+                    caminho_pov = None
+                    
+                    if caminho_pov_existente.exists():
+                        log_success(f'🚀 CHECKPOINT POV ALCANÇADO: {caminho_pov_existente.name} já existe. Pulando validação e geração da imagem.')
+                        caminho_pov = caminho_pov_existente
+                    else:
+                        validada = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=40)
 
-                    if validada:
-                        log_success(f'Imagem aprovada como produto principal: {primeira_imagem.name}')
-                        caminho_pov = gemini.executar_fluxo_imagem_pov(
-                            tarefa=prepared.task,
-                            foto_produto_escolhida=primeira_imagem,
-                            max_tentativas=3,
+                        if validada:
+                            log_success(f'Imagem aprovada como produto principal: {primeira_imagem.name}')
+                            caminho_pov = gemini.executar_fluxo_imagem_pov(
+                                tarefa=prepared.task,
+                                foto_produto_escolhida=primeira_imagem,
+                                max_tentativas=3,
+                            )
+                            if caminho_pov:
+                                log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
+                        else:
+                            raise Exception(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
+
+                    if caminho_pov:
+                        imagem_base_flow = caminho_pov
+                        
+                        arquivos_contexto = [caminho_pov]
+                        if arquivo_preco: arquivos_contexto.append(arquivo_preco)
+                        if arquivo_ref: arquivos_contexto.append(arquivo_ref)
+                        
+                        dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
+                        
+                        roteiro_bruto = gemini.treinar_e_gerar_roteiro(
+                            arquivos=arquivos_contexto,
+                            dados_produto=dados_anuncio,
+                            arquivo_ref=arquivo_ref,
+                            qtd_cenas=qtd_cenas_anuncio
                         )
                         
-                        if caminho_pov:
-                            log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
-                            imagem_base_flow = caminho_pov
-                            
-                            arquivos_contexto = [caminho_pov]
-                            if arquivo_preco: arquivos_contexto.append(arquivo_preco)
-                            if arquivo_ref: arquivos_contexto.append(arquivo_ref)
-                            
-                            dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
-                            
-                            roteiro_bruto = gemini.treinar_e_gerar_roteiro(
-                                arquivos=arquivos_contexto,
-                                dados_produto=dados_anuncio,
-                                arquivo_ref=arquivo_ref,
-                                qtd_cenas=qtd_cenas_anuncio
-                            )
-                            
-                            if roteiro_bruto and "TIMEOUT" not in roteiro_bruto and "ERRO" not in roteiro_bruto:
-                                with open(caminho_txt, "w", encoding="utf-8") as f:
-                                    f.write(roteiro_bruto)
-                                log_success(f'Roteiro gerado: {caminho_txt.name}')
-                            else:
-                                raise Exception('Falha ao obter resposta útil de roteiro do Gemini')
+                        if roteiro_bruto and "TIMEOUT" not in roteiro_bruto and "ERRO" not in roteiro_bruto:
+                            with open(caminho_txt, "w", encoding="utf-8") as f:
+                                f.write(roteiro_bruto)
+                            log_success(f'Roteiro gerado: {caminho_txt.name}')
                         else:
-                            raise Exception('Nao foi possivel gerar uma imagem POV valida')
+                            raise Exception('Falha ao obter resposta útil de roteiro do Gemini')
                     else:
-                        raise Exception(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
+                        raise Exception('Nao foi possivel gerar uma imagem POV valida')
                 else:
                     log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Pulando etapas de IA iniciais.')
                     caminho_pov_existente = Path(prepared.task.folder_path) / "POV_VALIDADO.png"
@@ -340,8 +357,8 @@ def main() -> None:
                 
                 log_success(f'Conteúdo da pasta {nome_pasta} movido para concluído. O diretório original ficou preservado e vazio.')
                 
-                # Grava a conta atual como vencedora e encerra o loop de retentativas
-                salvar_ultima_conta_env(idx_conta)
+                # Grava o email da conta atual como vencedora e encerra o loop de retentativas
+                salvar_ultima_conta_env(account.email)
                 sucesso_absoluto = True 
 
             except Exception as exc:
