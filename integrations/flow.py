@@ -410,19 +410,19 @@ class GoogleFlowAutomation:
         """
         Versão RESILIENTE: Tenta gerar o vídeo até 3 vezes no mesmo login se o card falhar.
         Garante que a imagem está upada e vinculada antes de enviar o ENTER.
+        Na retentativa, NÃO recarrega o projeto (evita erro de sessão); apenas fecha modais, 
+        limpa o texto anterior e reenvia.
         """
         for tentativa_local in range(1, 4):
             _log(f"[FLOW-IA] Iniciando tentativa local {tentativa_local}/3 para gerar esta cena...")
             self._fechar_modais_intrusivos()
 
             try:
-                # Se for retentativa, limpa o estado para nova submissão
+                # Se for retentativa, NÃO cria projeto novo. Apenas dá ESC para fechar possíveis mensagens de erro
                 if tentativa_local > 1:
-                    _log("🔄 Retentando: Limpando projeto anterior para nova submissão no mesmo login...")
-                    self._projeto_criado = False
-                    self._modelo_configurado = False
-                    self.clicar_novo_projeto()
-                    self.configurar_parametros_video()
+                    _log("🔄 Retentando cirurgicamente: Fechando alertas e reaproveitando a mesma aba...")
+                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                    time.sleep(2)
 
                 # 1. HARD CHECK DA IMAGEM: OBRIGATÓRIO (Evita Vídeo Aleatório sem seu Produto)
                 if caminho_imagem:
@@ -463,6 +463,7 @@ class GoogleFlowAutomation:
                     time.sleep(0.2)
                 except Exception: pass
 
+                import pyperclip
                 pyperclip.copy(prompt_linear)
                 box.send_keys(Keys.CONTROL, "v")
                 time.sleep(1.2)
@@ -474,21 +475,23 @@ class GoogleFlowAutomation:
                 box.send_keys(Keys.ENTER)
                 time.sleep(2)
                 
+                # Aguarda o processo real do card
                 sucesso = self._aguardar_geracao_tracking_inline(prompt_linear, timeout_geracao)
                 
                 if sucesso:
                     return True
                 else:
-                    _log(f"⚠️ Card indicou erro na tentativa {tentativa_local}. Retentando localmente...")
+                    _log(f"⚠️ Card indicou erro na tentativa {tentativa_local}. O Google Flow falhou ao gerar o vídeo.")
                     time.sleep(2)
-                    continue
+                    continue # Volta para o topo do FOR e tenta colar de novo na mesma tela
 
             except Exception as e:
-                _log(f'Erro na tentativa local {tentativa_local}: {e}')
+                _log(f'Erro na tentativa local {tentativa_local}: {str(e)[:100]}')
                 if tentativa_local == 3: return False
                 time.sleep(2)
+                
         return False
-
+    
     def _listar_cards(self):
         return self.driver.find_elements(By.XPATH, "//*[@data-tile-id]")
 
