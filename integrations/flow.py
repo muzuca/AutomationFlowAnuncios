@@ -363,15 +363,53 @@ class GoogleFlowAutomation:
             # Não falha imediatamente, permite o script tentar preencher o prompt
             return True
 
+    def _garantir_imagem_anexada(self, caminho_imagem: Path) -> bool:
+        """
+        Verifica se a imagem realmente foi vinculada ao slot 'Inicial' 
+        antes de prosseguirmos para o prompt.
+        """
+        _log("Validando visualmente a presença da imagem no Slot Inicial...")
+        try:
+            # 1. Checa a presença do botão 'Remove initial image'
+            btn_remover = self.driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Remove')]")
+            if len(btn_remover) > 0:
+                _log("✅ Imagem detectada e garantida no projeto.")
+                return True
+            
+            # 2. Checa se o botão Initial tem uma tag img dentro
+            botoes_initial = self.driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Initial image') and .//img]")
+            if len(botoes_initial) > 0:
+                _log("✅ Miniatura de imagem garantida no botão Inicial.")
+                return True
+            
+            _log("⚠️ O slot Inicial está vazio. Tentando re-vincular a imagem do projeto...")
+            
+            # Força refresh e reset completo local para limpar bugs da UI
+            self.driver.refresh()
+            time.sleep(5)
+            self._aguardar_carregamento_inicial()
+            
+            # Limpa flag local para re-configurar tudo e forçar vinculação
+            self._projeto_criado = False
+            self._modelo_configurado = False
+            self.clicar_novo_projeto()
+            self.configurar_parametros_video()
+            return self.anexar_imagem(caminho_imagem)
+            
+        except Exception as e:
+            _log(f"Erro na rotina de hard-check da imagem: {e}")
+            return False
+
     def _ler_texto_prompt_box(self, box: WebElement) -> str:
         try:
             return box.get_attribute("textContent") or box.text or ""
         except Exception:
             return ""
 
-    def enviar_prompt_e_aguardar(self, prompt: str, timeout_geracao: int = 420) -> bool:
+    def enviar_prompt_e_aguardar(self, prompt: str, caminho_imagem: Path = None, timeout_geracao: int = 420) -> bool:
         """
         Versão RESILIENTE: Tenta gerar o vídeo até 3 vezes no mesmo login se o card falhar.
+        Garante que a imagem está upada e vinculada antes de enviar o ENTER.
         """
         for tentativa_local in range(1, 4):
             _log(f"[FLOW-IA] Iniciando tentativa local {tentativa_local}/3 para gerar esta cena...")
@@ -386,17 +424,20 @@ class GoogleFlowAutomation:
                     self.clicar_novo_projeto()
                     self.configurar_parametros_video()
 
+                # 1. HARD CHECK DA IMAGEM: OBRIGATÓRIO (Evita Vídeo Aleatório sem seu Produto)
+                if caminho_imagem:
+                    if not self._garantir_imagem_anexada(caminho_imagem):
+                        _log("❌ Falha crítica: Não foi possível garantir a imagem no slot Inicial.")
+                        return False
+
                 ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-                time.sleep(0.2)
+                # O TEMPO CRUCIAL DE ESPERA PARA O ELEMENT NOT INTERACTABLE
+                time.sleep(2) 
                 
                 prompt_linear = " ".join(prompt.split())
                 
-                box = self._wait_visible(
-                    By.XPATH,
-                    "//div[@role='textbox' and @contenteditable='true']",
-                    timeout=20,
-                    descricao="campo prompt (Slate.js)",
-                )
+                # Foca explicitamente no input clicável
+                box = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@role='textbox' and @contenteditable='true'] | //textarea")))
 
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', inline: 'center'});", box)
                 time.sleep(0.3)
@@ -417,6 +458,7 @@ class GoogleFlowAutomation:
 
                 try:
                     box.send_keys(Keys.CONTROL, "a")
+                    time.sleep(0.5)
                     box.send_keys(Keys.BACKSPACE)
                     time.sleep(0.2)
                 except Exception: pass

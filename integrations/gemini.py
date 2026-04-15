@@ -1,6 +1,6 @@
 # arquivo: integrations/gemini.py
 # descricao: fachada GeminiAnunciosViaFlow blindada para validacao de imagem,
-# geracao POV e criacao de roteiro dinâmico.
+# geracao POV e criacao de roteiro dinâmico com suporte a Testes A/B (múltiplos roteiros).
 # Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s) e AUTO-F5 EM ERROS DA UI.
 # Adicionado suporte para avaliar múltiplas variantes de vídeo e eleger a melhor via interface Web.
 
@@ -41,6 +41,7 @@ Você é um especialista em Social Commerce. Sua tarefa é transformar fotos e v
 • GATILHOS: Proibido começar com "Para tudo" ou "Gente olha". Comece com o benefício direto.
 • INDEPENDÊNCIA DE CENA (FLOW): Cada cena é tratada pela IA como um arquivo único. É PROIBIDO usar palavras como "same", "repeat", "equal to previous" ou referências a outras cenas. Repita integralmente todas as descrições técnicas de áudio, voz e câmera em todas as cenas/prompts.
 • FORMATAÇÃO (CAIXAS DE TEXTO): Os prompts de cada cena, bem como as legendas/hashtags, DEVEM ser entregues em texto direto no chat. NUNCA escreva a frase "PROMPT TÉCNICO:" em nenhum lugar. O texto deve começar diretamente na instrução de transformação ("Transform the input image...").
+• QUEBRA DE LINHA: Você DEVE inserir uma linha em branco (dar um ENTER duplo) após o final de cada cena e, OBRIGATORIAMENTE, antes de iniciar a tag [Legenda e Hashtags]. NUNCA cole a legenda na mesma linha do áudio.
 
 2. PROTOCOLO DE SAÍDA
 Você deve entregar a resposta seguindo EXATAMENTE este modelo de estrutura em texto puro, direto no chat. A descrição da cena fica acima do prompt, e o prompt fica logo abaixo:
@@ -62,7 +63,7 @@ AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 [Cena 3: Título da Cena - Breve resumo sobre o Call to Action sem o uso de gestos com as mãos]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — Model keeps hands completely still, holding the items. Do NOT point or move arms. 2️Friendly wink and wide smile. 3️⃣ NO glitches.
+ACTION SEQUENCE — Model keeps hands completely still, holding the items. Do NOT point or move arms. 2️⃣ Friendly wink and wide smile. 3️⃣ NO glitches.
 Model voiceover says: "[Texto de 24-25 palavras com preço arredondado e CTA do carrinho]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
@@ -75,14 +76,14 @@ AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 DIRETRIZ FINAL: 
 Quando o usuário enviar arquivos, processe as informações e responda APENAS seguindo a estrutura visual acima. 
-Assegure-se de que cada prompt e a legenda estejam escrivos em texto puro, sem emojis na sequencia do chat. 
+Assegure-se de que cada prompt e a legenda estejam escritos em texto puro, sem emojis na sequencia do chat. 
 NUNCA invente movimentos de mãos se o modelo já estiver segurando algo na foto de referência.
 
 Confirme brevemente que entendeu a função e aguarde o comando com os arquivos.
 """
 
-_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo roteiro para um anúncio de {qtd_cenas} cenas do produto que está sendo apresentado nos arquivos em anexo. 
-Na fala devemos garantir o gancho na cena 1, falar as qualidades e benefícios do produto no meio e fala do preço e o CTA no final. 
+_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo roteiro para um anúncio de {qtd_cenas} cenas do produto que está sendo apresentado por uma vendedora mulher usando como referência os arquivos em anexo. 
+Na fala devemos garantir o gancho na primeira cena, falar as qualidades e benefícios do produto no meio e fazer o cta no final. 
 
 Estou enviando em anexo:
 - A foto do produto sendo apresentado em estilo POV (apenas duas mãos segurando o produto)
@@ -93,11 +94,16 @@ Extraia o nome do produto, o preço e os detalhes diretamente da leitura/transcr
 
 DIRETRIZES POV (NÃO NEGOCIÁVEIS):
 Como a filmagem é em POV (Point of View), os prompts técnicos DEVEM refletir isso. 
-Especifique claramente nos prompts que a câmera é POV e mostre apenas as mãos. É ESTRITAMENTE PROIBIDO gerar rostos, cabeças, corpos inteiros, pessoas ao fundo ou qualquer elemento que não esteja na imagem de referência POV. Foque apenas em movimentos sutis de respiração ou da própria luz/cenário, mantendo as mãos 100% estáticas.
+Especifique claramente nos prompts que a câmera é POV e mostre apenas as mãos. 
+É ESTRITAMENTE PROIBIDO gerar rostos, cabeças, corpos inteiros, pessoas ao fundo ou qualquer elemento que não esteja na imagem de referência POV, deixe isso claro em cada cena. 
+Foque apenas em movimentos sutis de respiração ou da própria luz/cenário, mantendo as mãos 100% estáticas.
+Deixe claro em cada cena que a voz é de uma mulher.
 
-Siga ESTRITAMENTE o Protocolo de Saída definido no seu treinamento em texto puro corrido, usando as tags [CENA 1], [CENA 2], etc.
+{instrucoes_teste_ab}
+
+Siga ESTRITAMENTE o Protocolo de Saída definido no seu treinamento em texto puro corrido, usando as tags [Cena 1: ...], [Cena 2: ...], etc.
 Lembre-se da regra de ouro: Câmera 100% estática, mãos completamente imóveis (anti-glitch), preço arredondado para cima, exatas 24-25 palavras por cena.
-Responda APENAS com as {qtd_cenas} cenas estruturadas, nada mais.
+Responda APENAS com as {qtd_cenas} cenas estruturadas, com a legenda separada de forma clara por um parágrafo no final, sem nenhuma introdução antes, apenas as cenas e a legenda+hashtags.
 """
 
 
@@ -444,63 +450,24 @@ class GeminiAnunciosViaFlow:
         except Exception:
             return False
 
-    def _extrair_resposta_binaria_direta(self) -> Optional[bool]:
-        seletores = [
-            'model-response',
-            'message-content',
-            '.model-response-text'
-        ]
-        for seletor in seletores:
-            try:
-                elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                if not elementos:
-                    continue
-                
-                el = elementos[-1]
-                txt = el.get_attribute('textContent') or el.get_attribute('innerText') or el.text or ''
-                txt = self._texto_limpo(txt).upper()
-                
-                if not txt or self._parece_texto_inutil_ui(txt):
-                    continue
-                
-                up_clean = re.sub(r'[*_.\-",:;]', ' ', txt)
-                sim_matches = list(re.finditer(r'\bSIM\b', up_clean))
-                nao_matches = list(re.finditer(r'\b(NAO|NÃO)\b', up_clean))
-                
-                last_sim = sim_matches[-1].start() if sim_matches else -1
-                last_nao = nao_matches[-1].start() if nao_matches else -1
-                
-                if last_sim > last_nao:
-                    return True
-                elif last_nao > last_sim:
-                    return False
-            except Exception:
-                pass
-        return None
-
     def _extrair_texto_resposta_recente(self) -> str:
-        binaria = self._extrair_resposta_binaria_direta()
-        if binaria is True:
-            return 'SIM'
-        if binaria is False:
-            return 'NAO'
-            
-        seletores = [
-            'model-response',
-            'message-content',
-            '.model-response-text'
-        ]
+        """Extrai o texto da última resposta da IA de forma direta e simplificada."""
+        seletores = ['model-response', 'message-content', '.model-response-text']
+        
         for seletor in seletores:
             try:
                 elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                if not elementos:
-                    continue
+                if not elementos: continue
                 
                 el = elementos[-1]
-                txt = self._texto_limpo(el.get_attribute('textContent') or el.get_attribute('innerText') or el.text or '')
-                if not txt or self._parece_texto_inutil_ui(txt):
+                txt_bruto = self.driver.execute_script("return arguments[0].textContent;", el)
+                txt = self._texto_limpo(txt_bruto or '').strip()
+                
+                # FILTRO SIMPLIFICADO EM LINHA: Ignora apenas se for vazio ou lixo de interface/carregamento
+                if not txt or any(lixo in txt for lixo in ["Show thinking", "Gemini said", "Carregando"]):
                     continue
-                return txt.strip()
+                
+                return txt
             except Exception:
                 pass
         return ''
@@ -524,41 +491,47 @@ class GeminiAnunciosViaFlow:
             
         return None
 
-    def _aguardar_fim_analise(self, timeout: int = 90) -> bool:
+    def _aguardar_fim_analise(self, timeout: int = 120) -> bool:
+        """Aguarda o Gemini terminar monitorando o estado dos botões da UI em tempo real"""
+        _log('Gemini processando... rastreando botões (modo inteligente).')
         fim = time.time() + timeout
-        viu_processando = False
+        
+        # Pausa minúscula (0.5s) só para o navegador registrar o clique de enviar e virar o botão pra Stop
+        time.sleep(0.5) 
+        
+        # XPaths mapeados exatamente a partir da DOM do Gemini
+        xpath_stop = "//button[@aria-label='Stop response' or contains(@class, 'stop')]"
+        xpath_idle = "//button[@aria-label='Microphone' or @aria-label='Send message' or @data-node-type='speech_dictation_mic_button']"
+        
         while time.time() < fim:
             try:
-                self._scroll_chat_ate_fim()
-                binaria = self._extrair_resposta_binaria_direta()
-                if binaria is not None:
-                    return True
+                # 1. Verifica se o botão "Stop response" está na tela (IA gerando)
+                stop_btns = self.driver.find_elements(By.XPATH, xpath_stop)
+                is_stopping = any(b.is_displayed() for b in stop_btns)
                 
-                if self._gemini_esta_processando():
-                    if not viu_processando:
-                        _log('Gemini esta processando... aguardando conclusao.')
-                    viu_processando = True
-                    time.sleep(0.1)
-                    continue
-                
-                if viu_processando:
-                    for _ in range(5):
-                        self._scroll_chat_ate_fim()
-                        binaria = self._extrair_resposta_binaria_direta()
-                        if binaria is not None:
+                if not is_stopping:
+                    # 2. Se o Stop não está lá, verifica se Mic ou Send voltaram a ficar ativos
+                    idle_btns = self.driver.find_elements(By.XPATH, xpath_idle)
+                    is_idle = any(b.is_displayed() and b.is_enabled() for b in idle_btns)
+                    
+                    if is_idle:
+                        # Extra-check: garante que não sobrou nenhum loader de 'generating' solto
+                        if not self._gemini_esta_processando():
                             return True
-                        time.sleep(0.1)
-                    return True
-                
-                texto = self._extrair_texto_resposta_recente()
-                if texto:
-                    return True
+                            
+            except StaleElementReferenceException:
+                pass # A DOM atualizou neste milissegundo. Ignora e tenta no próximo ciclo.
             except Exception:
                 pass
-            time.sleep(0.1)
+                
+            # Polling rápido: checa a tela 5 vezes por segundo. Zero esperas cegas.
+            time.sleep(0.2) 
+            
+        _log(f'Aviso: Timeout de {timeout}s atingido aguardando botões do Gemini.')
         return False
 
     def _aguardar_resposta_textual(self, timeout: int = 40) -> str:
+        """Aguarda a IA terminar de responder e retorna o texto capturado, sem interceptações."""
         finalizou = self._aguardar_fim_analise(timeout=timeout)
         
         if not finalizou:
@@ -569,46 +542,29 @@ class GeminiAnunciosViaFlow:
             
             for _ in range(10):
                 self._scroll_chat_ate_fim()
-                binaria = self._extrair_resposta_binaria_direta()
-                if binaria is True:
-                    _log('F5 Recovery com sucesso. Resposta capturada: SIM')
-                    return 'SIM'
-                if binaria is False:
-                    _log('F5 Recovery com sucesso. Resposta capturada: NAO')
-                    return 'NAO'
                 texto = self._extrair_texto_resposta_recente()
                 if texto:
-                    interpretacao = self._interpretar_resposta_binaria(texto)
-                    if interpretacao is not None:
-                        _log(f'F5 Recovery com sucesso. Resposta capturada: {"SIM" if interpretacao else "NAO"}')
-                        return 'SIM' if interpretacao else 'NAO'
+                    _log('F5 Recovery com sucesso. Resposta capturada.')
                     return texto
                 time.sleep(0.5)
             
             return 'TIMEOUT_ANALISE'
         
+        # Pega a resposta imediatamente após o Gemini sinalizar que terminou (botão submit voltou)
         fim = time.time() + 2.5
         ultima = ''
         while time.time() < fim:
             try:
                 self._scroll_chat_ate_fim()
-                binaria = self._extrair_resposta_binaria_direta()
-                if binaria is True:
-                    return 'SIM'
-                if binaria is False:
-                    return 'NAO'
                 texto = self._extrair_texto_resposta_recente()
                 if texto:
-                    ultima = texto
-                    interpretacao = self._interpretar_resposta_binaria(texto)
-                    if interpretacao is True:
-                        return 'SIM'
-                    if interpretacao is False:
-                        return 'NAO'
+                    # AQUI ESTAVA O SEU ERRO ANTIGO: O código tentava forçar o texto a virar SIM/NÃO.
+                    # Agora ele apenas pega o texto 100% puro e devolve. A função que chamou que lute pra interpretar.
                     return texto
             except Exception:
                 pass
             time.sleep(0.1)
+            
         return ultima or 'SEM_RESPOSTA_UTIL'
 
     def anexar_arquivo_local(self, caminho: Path) -> None:
@@ -738,28 +694,44 @@ class GeminiAnunciosViaFlow:
             return f'ERRO: {e}'
 
     def contar_imagens_geradas(self) -> int:
-        seletores = [
+        """
+        Conta as imagens geradas de forma instantânea via JavaScript.
+        Isso elimina o gargalo de ~20 segundos do Implicit Wait do Selenium
+        ao procurar elementos que ainda não existem na tela.
+        """
+        script_js = """
+        const seletores = [
             'model-response:last-of-type img[data-test-id*="generated"]',
             'model-response:last-of-type img[src^="blob:"]',
             'model-response:last-of-type img[alt*="Generated"]',
             'model-response:last-of-type img'
-        ]
-        vistos = []
-        for seletor in seletores:
-            try:
-                for el in self.driver.find_elements(By.CSS_SELECTOR, seletor):
-                    if not el.is_displayed():
-                        continue
-                    src = el.get_attribute('src') or ''
-                    if 'profile/picture' in src or 'avatar' in src.lower() or 'logo' in src.lower():
-                        continue
-                    alt = (el.get_attribute('alt') or '').strip().lower()
-                    key = (src, alt)
-                    if key not in vistos:
-                        vistos.append(key)
-            except Exception:
-                pass
-        return len(vistos)
+        ];
+        let imagensVistas = new Set();
+        
+        seletores.forEach(seletor => {
+            document.querySelectorAll(seletor).forEach(el => {
+                // Ignora fotos de perfil, avatares ou logos
+                const src = (el.src || '').toLowerCase();
+                if (src.includes('profile/picture') || src.includes('avatar') || src.includes('logo')) {
+                    return;
+                }
+                
+                // O elemento precisa ter alguma dimensão para ser considerado visível
+                if (el.getBoundingClientRect().width > 0) {
+                    imagensVistas.add(src);
+                }
+            });
+        });
+        
+        return imagensVistas.size;
+        """
+        
+        try:
+            total = self.driver.execute_script(script_js)
+            return int(total) if total else 0
+        except Exception as e:
+            # Caso o JS falhe por algum motivo muito estranho, retorna 0 instantaneamente
+            return 0
 
     def aguardar_nova_imagem(self, total_antes: int, timeout: int = 180) -> bool:
         fim = time.time() + timeout
@@ -909,7 +881,7 @@ class GeminiAnunciosViaFlow:
         self.anexar_arquivo_local(caminho_imagem)
         prompt_validacao_produto = (
             'A imagem anexada contem um produto fisico claramente visivel e identificavel? '
-            'Nao importa se ha textos, preco, interface de loja ou elementos promocionais. '
+            'A imagem não deve conter textos ou preços do produto. '
             "Se o produto estiver claramente visivel, responda APENAS com 'SIM'. "
             "Se nao houver produto visivel ou ele nao puder ser identificado, responda APENAS com 'NAO'."
         )
@@ -958,6 +930,16 @@ class GeminiAnunciosViaFlow:
         else:
             foto_produto_escolhida = Path(foto_produto_escolhida)
 
+        # PROMPT DE CORREÇÃO GENÉRICO: Para ser usado se a imagem reprovar
+        prompt_correcao_fidelidade = (
+            "A imagem que você gerou REPROVOU no controle de qualidade. A geometria, o design ou os detalhes "
+            "do produto estão diferentes da imagem de referência original. Isso é inaceitável para o anúncio.\n\n"
+            "Gere uma NOVA versão agora. Instruções cruciais:\n"
+            "1. Olhe atentamente para a forma e proporções do produto na PRIMEIRA imagem que te enviei.\n"
+            "2. O produto na nova imagem deve ser uma CÓPIA IDÊNTICA em termos de design e estrutura.\n"
+            "3. Mantenha as mãos em POV, mas não deixe a IA alucinar no formato do objeto."
+        )
+
         for tentativa in range(1, max_tentativas + 1):
             self._scroll_chat_ate_fim()
             _log(f'Fluxo POV iniciado (tentativa {tentativa}/{max_tentativas}).')
@@ -967,25 +949,46 @@ class GeminiAnunciosViaFlow:
             if tentativa == 1:
                 _log('Aproveitando contexto do chat atual (imagem já anexada na Etapa 10).')
             else:
-                _log('Abrindo novo chat para regerar imagem POV do zero...')
-                self.abrir_novo_chat_limpo()
-                self.anexar_arquivo_local(foto_produto_escolhida)
+                _log('Enviando instrução de correção de fidelidade visual no chat de geração...')
+                # Voltamos para o chat onde a imagem foi gerada para enviar a bronca
+                self.driver.back()
+                time.sleep(2)
 
             prompt_geracao = (
-                'Usando a imagem do produto que já está anexada nesta conversa como referência principal, '
-                'gere uma nova imagem ultra-realista vertical 9:16 para anuncio. '
-                'A cena deve estar em POV, como se a camera fosse os olhos da pessoa. '
-                f'Mostre exatamente duas maos humanas de {getattr(tarefa, "characteristics_model", getattr(tarefa, "caracteristicas_modelo", "uma modelo"))} '
-                'segurando ou interagindo naturally com o produto em primeiro plano. '
-                'O produto deve continuar fiel ao item original, claramente visivel, central, '
-                'bem enquadrado e sem deformacoes. '
-                'Estilo lifestyle premium, iluminacao natural de estudo, fundo coerente e realista. '
-                'Nao adicione textos, colagens, molduras, elementos de interface ou objetos extras competindo com o produto. '
-                'Responda gerando apenas a imagem.'
+                # Começamos com uma instrução de referência absoluta para forma e detalhes
+                'Usando a imagem do produto anexada como referência absoluta e imutável de forma, textura e detalhes, '
+                'gere uma nova imagem ultra-realista vertical 9:16 para anúncio. '
+                
+                # POV detalhado
+                'A cena deve estar em POV (ponto de vista em primeira pessoa), simulando a visão direta do usuário. '
+                
+                # Bloco dinâmico e restritivo das mãos: define quantidade estrita de "apenas duas"
+                f'Mostre exatamente e estritamente apenas duas mãos humanas de {getattr(tarefa, "characteristics_model", getattr(tarefa, "caracteristicas_modelo", "uma modelo"))}, '
+                
+                # Pose genérica mas funcional: força segurar pelas bordas para manter anatomia lógica
+                'em uma pose de pinça ou segurando pelas bordas ou outra posição coerente que interaja naturalmente com o produto em primeiro plano. '
+                
+                # Restrição de fidelidade do produto: elimina "deformações" e foca em "geometria" e "design"
+                'O produto deve ser uma réplica exata e idêntica do item original, central, em foco nítido e sem qualquer alteração em sua geometria ou design. '
+                
+                # Estilo e iluminação suaves
+                'Estilo lifestyle premium, com iluminação natural de estúdio suave e o fundo deve ser um cenário coerente e realista. '
+                
+                # Instrução de Bokeh para evitar conflito com o produto
+                'Mantenha o fundo em desfoque suave (bokeh) para não competir com o foco principal. '
+                
+                # Lista negativa reforçada
+                'Nao adicione textos, colagens, molduras, elementos de interface, mãos, dedos ou quaisquer objetos extras. '
+                
+                # Conclusão obrigatória
+                'ATENÇÃO: Responda gerando apenas a imagem, SEM TEXTO!'
             )
 
+            # Define qual prompt vai ser enviado (geração normal na 1ª vez, bronca nas seguintes)
+            prompt_envio = prompt_geracao if tentativa == 1 else prompt_correcao_fidelidade
+
             total_imagens_antes = self.contar_imagens_geradas()
-            status_envio = self.enviar_prompt(prompt_geracao, aguardar_resposta=False)
+            status_envio = self.enviar_prompt(prompt_envio, aguardar_resposta=False)
 
             if status_envio == 'ERRO_F5':
                 _log('Aviso: Abortando espera e recomeçando tentativa devido ao F5 de emergência.')
@@ -1006,51 +1009,59 @@ class GeminiAnunciosViaFlow:
                 continue
 
             self._scroll_chat_ate_fim()
-            _log('Validando qualidade da imagem POV gerada...')
+            _log('Validando a similaridade (>80%) do produto na imagem POV gerada...')
             self.abrir_novo_chat_limpo()
+            
+            # Anexa as duas imagens para o comparativo
+            if foto_produto_escolhida and foto_produto_escolhida.exists():
+                self.anexar_arquivo_local(foto_produto_escolhida)
             self.anexar_arquivo_local(caminho_saida)
 
             regerar_imagem = False
             for tentativa_val in range(1, 4):
                 self._scroll_chat_ate_fim()
                 
-                if tentativa_val > 1:
-                    prompt_validacao = "Não entendi ou houve um erro. Por favor, analise carefully a imagem anexada acima. Se ela mostrar mãos humanas segurando o produto em primeira pessoa (POV), responda SIM. Caso contrário, NAO. Responda apenas SIM ou NAO."
-                else:
-                    prompt_validacao = (
-                        "Você é um avaliador de anúncios, NÃO um fotógrafo perfeccionista. "
-                        "Analise esta imagem publicitária anexada e responda apenas com 'SIM' ou 'NAO'. "
-                        "Responda 'SIM' se TODAS as condições forem verdadeiras: "
-                        "- Existe um produto físico visível em destaque na imagem. "
-                        "- Existem mãos humanas visíveis segurando ou interagindo com o produto. "
-                        "- A cena transmite claramente um efeito POV ou próxima de primeira pessoa. "
-                        "- A imagem tem qualidade aceitável para uso em anúncio de redes sociais. "
-                        "Responda 'NAO' apenas se NÃO houver mãos, ou NÃO houver produto visível, "
-                        "ou se a imagem estiver confusa demais para uso publicitário. "
-                        "Não use critérios extremamente rígidos; seja tolerante se o conceito geral estiver correto."
-                    )
+                # JÚRI DE SIMILARIDADE: Sem loop de reavaliação de notas baixas
+                prompt_validacao = (
+                    "Você é um inspetor de Controle de Qualidade visual hiper-rigoroso. "
+                    "Eu acabei de enviar DUAS IMAGENS nesta exata ordem: "
+                    "1) A primeira imagem é o PRODUTO ORIGINAL (referência absoluta). "
+                    "2) A segunda imagem é a NOVA GERAÇÃO (a que tem as mãos em POV). "
+                    "Compare estritamente o design, a forma geométrica e a estrutura do produto nas duas imagens.\n"
+                    "Ignore o fundo, as mãos e a iluminação. Foque apenas no OBJETO.\n"
+                    "Responda EXCLUSIVAMENTE com a porcentagem de igualdade estrutural (ex: 85%) e nada mais."
+                )
 
                 veredito = self.enviar_prompt(prompt_validacao, timeout=60, aguardar_resposta=True).strip().upper()
                 
                 if not veredito or veredito in {'ENVIADO', 'TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
                     veredito = self._aguardar_resposta_textual(timeout=60).strip().upper()
 
-                resultado_final = self._interpretar_resposta_binaria(veredito)
-
-                if resultado_final is True:
-                    _log(f'✅ Imagem POV aprovada: {caminho_saida.name}')
-                    return caminho_saida
-
-                if resultado_final is False:
-                    if tentativa_val == 1:
-                        _log(f'⚠️ Recebi um NAO. Vou pedir uma reavaliação no mesmo chat antes de descartar...')
-                        continue
+                # Lógica de extração da porcentagem
+                import re
+                match_perc = re.search(r'(\d{1,3})\s*%', veredito)
+                
+                if match_perc:
+                    porcentagem = int(match_perc.group(1))
+                    if porcentagem >= 80:
+                        _log(f'✅ Imagem POV aprovada ({porcentagem}% de similaridade estrutural).')
+                        return caminho_saida
                     else:
-                        _log(f'❌ Imagem POV reprovada após reavaliação. Motivo: {veredito[:120]}')
+                        # Se deu nota baixa, NÃO PERDE TEMPO REAVALIANDO. Já manda regerar a imagem.
+                        _log(f'❌ Imagem POV reprovada ({porcentagem}% de similaridade). Repetindo fluxo de geração...')
                         regerar_imagem = True
                         break 
-                
-                _log(f'⚠️ Falha na leitura do veredito (Resposta: {veredito[:50]}). Retentando no mesmo chat...')
+                else:
+                    # Fallback caso ele teime em não dar número na primeira tentativa da validação
+                    if tentativa_val == 1:
+                        _log(f'⚠️ Recebi veredito sem %. Pedindo reavaliação no chat de juri...')
+                        prompt_reaval = "Você não respondeu com a porcentagem. Qual o grau de similaridade (ex: 85%)?"
+                        self.enviar_prompt(prompt_reaval, aguardar_resposta=False)
+                        continue
+                    else:
+                        _log(f'❌ Falha na extração de nota do juri: {veredito[:60]}')
+                        regerar_imagem = True
+                        break
 
             if regerar_imagem:
                 continue 
@@ -1065,8 +1076,13 @@ class GeminiAnunciosViaFlow:
         arquivos: List[Path],
         dados_produto: Dict,
         arquivo_ref: Optional[Path] = None,
-        qtd_cenas: int = 3
+        qtd_cenas: int = 3,
+        roteiros_anteriores: Optional[List[str]] = None
     ) -> str:
+        """
+        Gera um roteiro com base nas imagens. Se roteiros_anteriores forem fornecidos (Teste A/B), 
+        injeta uma instrução rigorosa para que a IA crie abordagens inéditas, evitando repetição.
+        """
         id_pasta = dados_produto.get('nome', '1')
         
         self._scroll_chat_ate_fim()
@@ -1096,9 +1112,26 @@ class GeminiAnunciosViaFlow:
             else:
                 texto_referencia_dinamico = "Outra imagem com a descrição detalhada que deve ser usada para compor os detalhes das explicacoes do produto."
 
+        # LÓGICA DE TESTE A/B (VARIAÇÃO DE ROTEIROS)
+        instrucoes_teste_ab = ""
+        if roteiros_anteriores:
+            _log(f"Injetando {len(roteiros_anteriores)} roteiro(s) anterior(es) para forçar variação no Teste A/B...")
+            textos_anteriores = "\n\n".join([f"--- ROTEIRO ANTERIOR ---\n{r}\n------------------------" for r in roteiros_anteriores])
+            instrucoes_teste_ab = (
+                "\n\nATENÇÃO MÁXIMA (TESTE A/B): Eu já criei os roteiros abaixo para este produto. "
+                "Sua tarefa agora é criar um roteiro 100% INÉDITO e DIFERENTE. "
+                "Mude completamente o ângulo de venda, utilize um gancho inicial radicalmente diferente na Cena 1, "
+                "e destaque benefícios que não foram o foco principal na versão anterior. "
+                "Aja como um copywriter criativo testando uma nova hipótese de venda para um público diferente.\n\n"
+                f"{textos_anteriores}\n\n"
+                "LEMBRE-SE: Apesar do texto e da abordagem mudarem completamente, você DEVE manter as regras "
+                "técnicas de 24-25 palavras, câmera estática, formato POV e arredondamento de preço."
+            )
+
         prompt_execucao = _TEMPLATE_ROTEIRO_EXECUCAO.format(
             qtd_cenas=qtd_cenas,
-            texto_referencia_dinamico=texto_referencia_dinamico
+            texto_referencia_dinamico=texto_referencia_dinamico,
+            instrucoes_teste_ab=instrucoes_teste_ab
         )
         
         prompt_execucao_linear = " ".join(prompt_execucao.split())
@@ -1163,3 +1196,47 @@ class GeminiAnunciosViaFlow:
 
         _log(f"Aviso: Não foi possível casar a resposta '{resposta_limpa}' com os arquivos. Assumindo Variante 1.")
         return videos_720p[0]
+    
+    def classificar_arquivos_e_extrair_dados(self, arquivos: list[Path]) -> dict | None:
+        """Faz o upload dos arquivos brutos, pede para a IA classificar quem é quem e extrair os textos de venda."""
+        self.abrir_novo_chat_limpo()
+        
+        nomes_arquivos = []
+        for arq in arquivos:
+            self.anexar_arquivo_local(arq)
+            nomes_arquivos.append(arq.name)
+            
+        _log(f'Solicitando classificação visual e OCR para: {", ".join(nomes_arquivos)}')
+
+        prompt = f"""
+        Eu fiz o upload dos seguintes arquivos nesta exata ordem: {', '.join(nomes_arquivos)}.
+        Eu preciso que você aja como um organizador de arquivos e extrator de dados.
+        
+        Analise o conteúdo visual de cada arquivo e faça o mapeamento:
+        1. "arquivo_produto": O nome exato do arquivo que mostra APENAS a foto limpa do produto (ideal para recorte).
+        2. "arquivo_preco": O nome exato do arquivo que contém o PREÇO, condições ou nome do produto em texto.
+        3. "arquivo_referencia": O nome exato do arquivo restante (pode ser vídeo ou foto).
+
+        Além disso, leia os textos presentes na imagem de PREÇO e extraia os dados REAIS de venda:
+        - "nome_produto": Nome real do produto lido.
+        - "preco_condicoes": Valor do produto e regras de pagamento/parcelamento que você conseguir ler.
+        - "beneficios": Breve resumo de qualquer benefício ou slogan escrito.
+
+        Retorne EXCLUSIVAMENTE um objeto JSON válido, sem markdown (sem ```json), com estas exatas 6 chaves em minúsculo. Não escreva mais nenhuma palavra.
+        """
+
+        resposta = self.enviar_prompt(prompt, timeout=120, aguardar_resposta=True)
+        if not resposta or resposta in {'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
+            resposta = self._aguardar_resposta_textual(timeout=60)
+
+        import json
+        import re
+        # Tenta caçar o JSON na resposta bruta
+        match = re.search(r'\{.*\}', resposta, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception as e:
+                _log(f'Erro ao converter JSON da IA: {e}\nResposta Bruta: {resposta}')
+                
+        return None
