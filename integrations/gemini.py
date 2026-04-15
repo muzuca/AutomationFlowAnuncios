@@ -918,10 +918,11 @@ class GeminiAnunciosViaFlow:
         self,
         tarefa: Any,
         foto_produto_escolhida: Optional[Path] = None,
-        max_tentativas: int = 3,
+        max_versoes: int = 3,
+        numero_roteiro: int = 1, # Adicionado para permitir rodar por roteiro
     ) -> Optional[Path]:
         dir_anuncio = Path(getattr(tarefa, 'folder_path', '.'))
-        caminho_saida = dir_anuncio / 'POV_VALIDADO.png'
+        caminho_final = dir_anuncio / f'POV_VALIDADO_Roteiro{numero_roteiro}.png'
 
         if foto_produto_escolhida is None:
             foto_produto_escolhida = self._selecionar_foto_produto(tarefa)
@@ -930,68 +931,46 @@ class GeminiAnunciosViaFlow:
         else:
             foto_produto_escolhida = Path(foto_produto_escolhida)
 
-        # PROMPT DE CORREÇÃO GENÉRICO: Para ser usado se a imagem reprovar
-        prompt_correcao_fidelidade = (
-            "A imagem que você gerou REPROVOU no controle de qualidade. A geometria, o design ou os detalhes "
-            "do produto estão diferentes da imagem de referência original. Isso é inaceitável para o anúncio.\n\n"
-            "Gere uma NOVA versão agora. Instruções cruciais:\n"
-            "1. Olhe atentamente para a forma e proporções do produto na PRIMEIRA imagem que te enviei.\n"
-            "2. O produto na nova imagem deve ser uma CÓPIA IDÊNTICA em termos de design e estrutura.\n"
-            "3. Mantenha as mãos em POV, mas não deixe a IA alucinar no formato do objeto."
-        )
+        # Contexto Rico: Coletar metadados do produto se a Etapa IA-0 tiver preenchido
+        dados_anuncio = getattr(tarefa, 'dados_anuncio', {})
+        nome_prod = dados_anuncio.get('nome_produto', 'o produto')
+        beneficios = dados_anuncio.get('beneficios_extras', '')
+        
+        contexto_produto = f"O produto é '{nome_prod}'. "
+        if beneficios:
+            contexto_produto += f"Detalhes e contexto de uso: {beneficios}. "
 
-        for tentativa in range(1, max_tentativas + 1):
-            self._scroll_chat_ate_fim()
-            _log(f'Fluxo POV iniciado (tentativa {tentativa}/{max_tentativas}).')
+        imagens_geradas = []
 
-            caminho_saida.parent.mkdir(parents=True, exist_ok=True)
+        # ==========================================================
+        # ETAPA 1: GERAR MÚLTIPLAS VERSÕES (CANDIDATAS)
+        # ==========================================================
+        for v_idx in range(1, max_versoes + 1):
+            _log(f'Gerando versão POV {v_idx}/{max_versoes} (Roteiro {numero_roteiro})...')
+            caminho_parcial = dir_anuncio / f'POV_candidato_R{numero_roteiro}_v{v_idx}.png'
             
-            if tentativa == 1:
-                _log('Aproveitando contexto do chat atual (imagem já anexada na Etapa 10).')
-            else:
-                _log('Enviando instrução de correção de fidelidade visual no chat de geração...')
-                # Voltamos para o chat onde a imagem foi gerada para enviar a bronca
-                self.driver.back()
-                time.sleep(2)
-
+            # Limpa o chat para cada geração para evitar que o Gemini copie a si mesmo
+            self.abrir_novo_chat_limpo()
+            self.anexar_arquivo_local(foto_produto_escolhida)
+            
             prompt_geracao = (
-                # Começamos com uma instrução de referência absoluta para forma e detalhes
-                'Usando a imagem do produto anexada como referência absoluta e imutável de forma, textura e detalhes, '
-                'gere uma nova imagem ultra-realista vertical 9:16 para anúncio. '
-                
-                # POV detalhado
-                'A cena deve estar em POV (ponto de vista em primeira pessoa), simulando a visão direta do usuário. '
-                
-                # Bloco dinâmico e restritivo das mãos: define quantidade estrita de "apenas duas"
-                f'Mostre exatamente e estritamente apenas duas mãos humanas de {getattr(tarefa, "characteristics_model", getattr(tarefa, "caracteristicas_modelo", "uma modelo"))}, '
-                
-                # Pose genérica mas funcional: força segurar pelas bordas para manter anatomia lógica
-                'em uma pose de pinça ou segurando pelas bordas ou outra posição coerente que interaja naturalmente com o produto em primeiro plano. '
-                
-                # Restrição de fidelidade do produto: elimina "deformações" e foca em "geometria" e "design"
-                'O produto deve ser uma réplica exata e idêntica do item original, central, em foco nítido e sem qualquer alteração em sua geometria ou design. '
-                
-                # Estilo e iluminação suaves
-                'Estilo lifestyle premium, com iluminação natural de estúdio suave e o fundo deve ser um cenário coerente e realista. '
-                
-                # Instrução de Bokeh para evitar conflito com o produto
-                'Mantenha o fundo em desfoque suave (bokeh) para não competir com o foco principal. '
-                
-                # Lista negativa reforçada
-                'Nao adicione textos, colagens, molduras, elementos de interface, mãos, dedos ou quaisquer objetos extras. '
-                
-                # Conclusão obrigatória
-                'ATENÇÃO: Responda gerando apenas a imagem, SEM TEXTO!'
+                f"Usando a imagem anexada como referência absoluta de forma geométrica, textura e detalhes originais, "
+                f"gere uma nova imagem ultra-realista vertical 9:16 para um anúncio.\n\n"
+                f"INFORMAÇÕES REAIS DO PRODUTO FÍSICO: {contexto_produto}\n\n"
+                f"A cena deve estar em POV (ponto de vista em primeira pessoa). "
+                f"Mostre exatamente DUAS MÃOS humanas interagindo naturalmente com o produto no mundo real, "
+                f"respeitando a escala lógica e a física do objeto descrita no contexto. "
+                f"O produto DEVE ser idêntico ao original, centralizado e sem deformações ou invenções no design. "
+                f"Estilo lifestyle premium com iluminação suave. Mantenha o fundo em desfoque (bokeh). "
+                f"NÃO adicione nenhum texto, elemento gráfico ou dedo a mais.\n\n"
+                f"Responda APENAS gerando a imagem."
             )
 
-            # Define qual prompt vai ser enviado (geração normal na 1ª vez, bronca nas seguintes)
-            prompt_envio = prompt_geracao if tentativa == 1 else prompt_correcao_fidelidade
-
             total_imagens_antes = self.contar_imagens_geradas()
-            status_envio = self.enviar_prompt(prompt_envio, aguardar_resposta=False)
+            status_envio = self.enviar_prompt(prompt_geracao, aguardar_resposta=False)
 
             if status_envio == 'ERRO_F5':
-                _log('Aviso: Abortando espera e recomeçando tentativa devido ao F5 de emergência.')
+                _log(f'Aviso: F5 na versão {v_idx}. Abortando essa versão.')
                 continue
 
             if not self.aguardar_nova_imagem(total_antes=total_imagens_antes, timeout=180):
@@ -1000,76 +979,78 @@ class GeminiAnunciosViaFlow:
             baixou = False
             for _ in range(3):
                 self._scroll_chat_ate_fim()
-                if self.baixar_ultima_imagem(caminho_saida):
+                if self.baixar_ultima_imagem(caminho_parcial):
                     baixou = True
                     break
                 
-            if not baixou:
-                _log('Falha persistente ao baixar imagem gerada.')
-                continue
-
-            self._scroll_chat_ate_fim()
-            _log('Validando a similaridade (>80%) do produto na imagem POV gerada...')
-            self.abrir_novo_chat_limpo()
-            
-            # Anexa as duas imagens para o comparativo
-            if foto_produto_escolhida and foto_produto_escolhida.exists():
-                self.anexar_arquivo_local(foto_produto_escolhida)
-            self.anexar_arquivo_local(caminho_saida)
-
-            regerar_imagem = False
-            for tentativa_val in range(1, 4):
-                self._scroll_chat_ate_fim()
-                
-                # JÚRI DE SIMILARIDADE: Sem loop de reavaliação de notas baixas
-                prompt_validacao = (
-                    "Você é um inspetor de Controle de Qualidade visual hiper-rigoroso. "
-                    "Eu acabei de enviar DUAS IMAGENS nesta exata ordem: "
-                    "1) A primeira imagem é o PRODUTO ORIGINAL (referência absoluta). "
-                    "2) A segunda imagem é a NOVA GERAÇÃO (a que tem as mãos em POV). "
-                    "Compare estritamente o design, a forma geométrica e a estrutura do produto nas duas imagens.\n"
-                    "Ignore o fundo, as mãos e a iluminação. Foque apenas no OBJETO.\n"
-                    "Responda EXCLUSIVAMENTE com a porcentagem de igualdade estrutural (ex: 85%) e nada mais."
-                )
-
-                veredito = self.enviar_prompt(prompt_validacao, timeout=60, aguardar_resposta=True).strip().upper()
-                
-                if not veredito or veredito in {'ENVIADO', 'TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
-                    veredito = self._aguardar_resposta_textual(timeout=60).strip().upper()
-
-                # Lógica de extração da porcentagem
-                import re
-                match_perc = re.search(r'(\d{1,3})\s*%', veredito)
-                
-                if match_perc:
-                    porcentagem = int(match_perc.group(1))
-                    if porcentagem >= 80:
-                        _log(f'✅ Imagem POV aprovada ({porcentagem}% de similaridade estrutural).')
-                        return caminho_saida
-                    else:
-                        # Se deu nota baixa, NÃO PERDE TEMPO REAVALIANDO. Já manda regerar a imagem.
-                        _log(f'❌ Imagem POV reprovada ({porcentagem}% de similaridade). Repetindo fluxo de geração...')
-                        regerar_imagem = True
-                        break 
-                else:
-                    # Fallback caso ele teime em não dar número na primeira tentativa da validação
-                    if tentativa_val == 1:
-                        _log(f'⚠️ Recebi veredito sem %. Pedindo reavaliação no chat de juri...')
-                        prompt_reaval = "Você não respondeu com a porcentagem. Qual o grau de similaridade (ex: 85%)?"
-                        self.enviar_prompt(prompt_reaval, aguardar_resposta=False)
-                        continue
-                    else:
-                        _log(f'❌ Falha na extração de nota do juri: {veredito[:60]}')
-                        regerar_imagem = True
-                        break
-
-            if regerar_imagem:
-                continue 
+            if baixou and caminho_parcial.exists():
+                imagens_geradas.append(caminho_parcial)
+                _log(f'Versão {v_idx} gerada e salva com sucesso.')
             else:
-                continue
+                _log(f'Falha persistente ao baixar a versão {v_idx}.')
 
-        _log('🚨 Erro fatal: Não foi possível gerar uma imagem POV válida.')
-        return None
+        if not imagens_geradas:
+            _log('ERRO FATAL: Não foi possível gerar nenhuma das versões POV solicitadas.')
+            return None
+
+        # Se só conseguiu gerar uma imagem (ex: deu erro nas outras), ela ganha por W.O.
+        if len(imagens_geradas) == 1:
+            _log('Apenas uma imagem POV foi gerada com sucesso. Definindo-a como vencedora por W.O.')
+            shutil.copy2(str(imagens_geradas[0]), str(caminho_final))
+            return caminho_final
+
+        # ==========================================================
+        # ETAPA 2: JÚRI DE CURADORIA DA IA (ESCOLHA DA MELHOR FOTO)
+        # ==========================================================
+        _log(f'Iniciando Direção de Arte (Júri IA) entre as {len(imagens_geradas)} versões POV...')
+        self.abrir_novo_chat_limpo()
+        
+        # Anexa o produto original como gabarito
+        self.anexar_arquivo_local(foto_produto_escolhida)
+        
+        # Anexa todas as versões criadas
+        nomes_candidatos = []
+        for img in imagens_geradas:
+            self.anexar_arquivo_local(img)
+            nomes_candidatos.append(img.name)
+
+        prompt_juri = (
+            f"Você atua como um Diretor de Fotografia Publicitária. \n"
+            f"Eu enviei várias imagens. A PRIMEIRA imagem é a foto real do produto de GABARITO.\n"
+            f"As próximas imagens são as GERAÇÕES CANDIDATAS com os seguintes nomes: {', '.join(nomes_candidatos)}.\n\n"
+            f"CONTEXTO DE USO DO PRODUTO: {contexto_produto}\n\n"
+            f"Sua missão é escolher a melhor candidata julgando estritamente os pontos abaixo:\n"
+            f"1. A candidata manteve a fidelidade à geometria e design da foto do GABARITO?\n"
+            f"2. As mãos estão interagindo de forma realista (sem dedos deformados ou posições impossíveis) em relação ao que o produto é?\n\n"
+            f"Não escreva NENHUM texto extra. Responda única e exclusivamente com o NOME EXATO do arquivo vencedor "
+            f"(exemplo: responda apenas '{nomes_candidatos[0]}')."
+        )
+
+        resposta = self.enviar_prompt(prompt_juri, timeout=90, aguardar_resposta=True)
+        
+        if not resposta or resposta in {'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
+            resposta = self._aguardar_resposta_textual(timeout=60)
+
+        # Lógica de extração do vencedor (procura qual arquivo foi citado na resposta)
+        vencedor_path = None
+        resposta_limpa = str(resposta).lower().strip()
+        
+        for candidato in imagens_geradas:
+            if candidato.name.lower() in resposta_limpa:
+                vencedor_path = candidato
+                break
+                
+        # Se a IA enrolar e não citar nenhum nome claramente, pegamos a primeira por segurança
+        if not vencedor_path:
+            _log(f'Aviso: O Júri não respondeu com um nome válido. Resposta lida: {resposta[:60]}... Usando a primeira imagem como fallback.')
+            vencedor_path = imagens_geradas[0]
+
+        _log(f'🏆 O JÚRI DA IA DECIDIU! O POV Vencedor é: {vencedor_path.name}')
+        
+        # Copia o vencedor para o nome final esperado pelo pipeline (ex: POV_VALIDADO_Roteiro1.png)
+        shutil.copy2(str(vencedor_path), str(caminho_final))
+        
+        return caminho_final
 
     def treinar_e_gerar_roteiro(
         self,

@@ -2,7 +2,7 @@
 # descricao: Orquestrador blindado. Sincroniza credenciais, carrega configuracoes,
 # cria navegador e executa o fluxo completo. Possui LOOP INFINITO DE RETENTATIVAS
 # com rodízio automático de contas em caso de falha.
-# ATUALIZAÇÃO: Checkpoint do Júri, Upscale, Limpeza do 720p, Função de limpeza de roteiro corrigida e Retry de IA integrado.
+# ATUALIZAÇÃO: Checkpoint do Júri POV por Roteiro, Upscale, Limpeza do 720p, Função de limpeza de roteiro corrigida e Retry de IA integrado.
 from __future__ import annotations
 
 import os
@@ -236,23 +236,19 @@ def main() -> None:
                             # 1. Renomeia os arquivos focando SÓ no nome base, ignorando extensões
                             def renomear_seguro(chave_json, prefixo):
                                 nome_ia = str(dados_ia.get(chave_json, "")).strip().lower()
-                                if not nome_ia: return
+                                if not nome_ia:
+                                    return
                                 
-                                # Extrai só o nome sem o .jpg / .png (Ex: "img_6023")
                                 base_ia = Path(nome_ia).stem 
                                 
-                                # Usamos list() para permitir modificar o mapa sem quebrar o loop
                                 for nome_real, arq_obj in list(mapa_arquivos.items()):
                                     base_real = arq_obj.stem.lower()
-                                    
-                                    # Se a base bater (ex: img_6023 == img_6023), achamos o arquivo!
                                     if base_ia == base_real or base_ia in base_real:
                                         if not arq_obj.name.startswith(prefixo):
                                             novo_nome = f"{prefixo}_{arq_obj.name}"
                                             novo_caminho = arq_obj.parent / novo_nome
                                             arq_obj.rename(novo_caminho)
                                             
-                                            # Atualiza o mapa com o novo objeto Path e remove o velho
                                             mapa_arquivos[novo_nome.lower()] = Path(novo_caminho)
                                             del mapa_arquivos[nome_real]
                                         break
@@ -277,9 +273,12 @@ def main() -> None:
                 if caminho_metadados.exists():
                     txt_lines = caminho_metadados.read_text(encoding='utf-8').splitlines()
                     for line in txt_lines:
-                        if line.startswith('NOME_REAL:'): task.dados_anuncio['nome_produto'] = line.replace('NOME_REAL:', '').strip()
-                        if line.startswith('PRECO_E_CONDICOES:'): task.dados_anuncio['preco'] = line.replace('PRECO_E_CONDICOES:', '').strip()
-                        if line.startswith('BENEFICIOS_EXTRAS:'): task.dados_anuncio['beneficios_extras'] = line.replace('BENEFICIOS_EXTRAS:', '').strip()
+                        if line.startswith('NOME_REAL:'):
+                            task.dados_anuncio['nome_produto'] = line.replace('NOME_REAL:', '').strip()
+                        if line.startswith('PRECO_E_CONDICOES:'):
+                            task.dados_anuncio['preco'] = line.replace('PRECO_E_CONDICOES:', '').strip()
+                        if line.startswith('BENEFICIOS_EXTRAS:'):
+                            task.dados_anuncio['beneficios_extras'] = line.replace('BENEFICIOS_EXTRAS:', '').strip()
 
                 # =====================================================================
                 # PREPARAÇÃO DA TAREFA E EXTRAÇÃO DE VARIÁVEIS
@@ -288,71 +287,22 @@ def main() -> None:
                 log_success(describe_task(prepared.task))
 
                 if not prepared.candidate_product_assets:
-                     raise Exception('Nenhum candidato de imagem de produto encontrado na tarefa')
+                    raise Exception('Nenhum candidato de imagem de produto encontrado na tarefa')
                 
-                imagem_base_flow = prepared.candidate_product_assets[0].path
+                primeira_imagem = prepared.candidate_product_assets[0].path
                 arquivo_ref = prepared.reference_asset.path if prepared.reference_asset else None
                 arquivo_preco = prepared.price_asset.path if prepared.price_asset else None
 
-                if arquivo_preco: log_success(f'Arquivo de preco: {arquivo_preco.name}')
-                if arquivo_ref: log_success(f'Arquivo de referencia: {arquivo_ref.name}')
+                if arquivo_preco:
+                    log_success(f'Arquivo de preco: {arquivo_preco.name}')
+                if arquivo_ref:
+                    log_success(f'Arquivo de referencia: {arquivo_ref.name}')
 
-                # --- CHECKPOINT: POV ---
-                pasta_task = Path(prepared.task.folder_path)
-                caminho_pov_existente = pasta_task / "POV_VALIDADO.png"
-                caminho_pov = None
-                imagem_base_flow = None
-                
-                if caminho_pov_existente.exists():
-                    log_success(f'🚀 CHECKPOINT POV ALCANÇADO: {caminho_pov_existente.name} já existe. Pulando geração da imagem.')
-                    caminho_pov = caminho_pov_existente
-                    imagem_base_flow = caminho_pov_existente
-                else:
-                    log_step('ETAPA IA: Validando imagens candidatas e gerando POV')
-                    
-                    foto_produto_escolhida = None
-                    
-                    # LOOP DE RESILIÊNCIA: Confia 100% na ordem que o processor.py julgou
-                    for i, candidato in enumerate(prepared.candidate_product_assets, 1):
-                        img_path = candidato.path
-                        
-                        # --- CÓDIGO DE RASTREIO DE DATA ---
-                        birthtime = img_path.stat().st_birthtime
-                        # Formata a data para Ano-Mês-Dia Hora:Minuto:Segundo.Milissegundos
-                        data_exata = datetime.fromtimestamp(birthtime).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                        
-                        log_step(f"Avaliando foto {i}/{len(prepared.candidate_product_assets)}: {img_path.name} | Criada em: {data_exata}")
-                        # -----------------------------------
-                        
-                        validada = gemini._validar_imagem_produto(img_path, timeout_resposta=40)
-                        
-                        if validada:
-                            log_success(f'✅ Imagem aprovada: {img_path.name}')
-                            foto_produto_escolhida = img_path
-                            break
-                        else:
-                            log_error(f'❌ Imagem reprovada ({img_path.name}).')
-                            # Limpa o chat para tentar a próxima imagem sem "sujar" o contexto da IA
-                            if i < len(prepared.candidate_product_assets):
-                                log_step("Limpando chat para tentar próxima imagem...")
-                                gemini.abrir_novo_chat_limpo()
-                                time.sleep(2)
-                            
-                    if not foto_produto_escolhida:
-                        raise Exception('Nenhuma imagem da pasta foi aprovada pelo Gemini. Encerrando tarefa.')
-
-                    # Gera o POV com a imagem validada
-                    caminho_pov = gemini.executar_fluxo_imagem_pov(
-                        tarefa=prepared.task,
-                        foto_produto_escolhida=foto_produto_escolhida,
-                        max_tentativas=3,
-                    )
-                    
-                    if caminho_pov:
-                        log_success(f'Imagem POV validada e salva em: {caminho_pov.name}')
-                        imagem_base_flow = caminho_pov
-                    else:
-                        raise Exception('Nao foi possivel gerar uma imagem POV valida')
+                # Validação única da foto original do produto
+                log_step('ETAPA IA: Validando candidato a produto original...')
+                if not gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=40):
+                    raise Exception(f'Imagem reprovada como produto principal: {primeira_imagem.name}')
+                log_success(f'Imagem base do produto aprovada: {primeira_imagem.name}')
 
                 # =========================================================================
                 # LOOP DE TESTE A/B (MÚLTIPLOS ROTEIROS) E GERAÇÃO DO FLOW
@@ -364,6 +314,7 @@ def main() -> None:
                     sufixo_rot = f"Roteiro{r_idx}"
                     caminho_txt_cenas = Path(prepared.task.folder_path) / f"{sufixo_rot}_Cenas.txt"
                     caminho_txt_legenda = Path(prepared.task.folder_path) / f"{sufixo_rot}_Legenda.txt"
+                    caminho_pov_roteiro = Path(prepared.task.folder_path) / f"POV_VALIDADO_{sufixo_rot}.png"
 
                     # --- CHECKPOINT MESTRE: SE O VÍDEO FINAL JÁ EXISTE, PULA TUDO DESSE ROTEIRO ---
                     arquivos_1080_existentes = list(Path(prepared.task.folder_path).glob(f"01_Escolhido_{sufixo_rot}_Variante*_1080p.mp4"))
@@ -375,11 +326,31 @@ def main() -> None:
                         
                         vencedor_simulado = arquivos_1080_existentes[0] 
                         alt_simuladas = list(Path(prepared.task.folder_path).glob(f"{sufixo_rot}_Variante*_720p.mp4"))
+                        
                         resultados_roteiros.append({
                             'vencedor_ja_1080p': vencedor_simulado, 
                             'alternativas': alt_simuladas
                         })
-                        continue # Vai direto para o próximo r_idx (Roteiro2)
+                        continue  # Vai direto para o próximo r_idx (Roteiro2)
+
+                    # --- CHECKPOINT POV INDIVIDUAL POR ROTEIRO ---
+                    imagem_base_flow = None
+                    if caminho_pov_roteiro.exists():
+                        log_success(f'🚀 CHECKPOINT POV ALCANÇADO: {caminho_pov_roteiro.name} já existe.')
+                        imagem_base_flow = caminho_pov_roteiro
+                    else:
+                        log_step(f'ETAPA IA: Gerando e curando imagem POV para {sufixo_rot}...')
+                        novo_pov = gemini.executar_fluxo_imagem_pov(
+                            tarefa=prepared.task,
+                            foto_produto_escolhida=primeira_imagem,
+                            max_versoes=3,
+                            numero_roteiro=r_idx
+                        )
+                        if novo_pov:
+                            log_success(f'POV validado pelo Júri para {sufixo_rot}: {novo_pov.name}')
+                            imagem_base_flow = novo_pov
+                        else:
+                            raise Exception(f'Falha fatal ao gerar POV para {sufixo_rot}')
 
                     # --- CHECKPOINT: IA ROTEIRO E VALIDAÇÃO DE TAMANHO ---
                     precisa_gerar_roteiro = True
@@ -396,8 +367,10 @@ def main() -> None:
                         log_step(f'ETAPA IA: Gerando {sufixo_rot} ({r_idx}/{qtd_roteiros})')
                         
                         arquivos_contexto = [imagem_base_flow]
-                        if arquivo_preco: arquivos_contexto.append(arquivo_preco)
-                        if arquivo_ref: arquivos_contexto.append(arquivo_ref)
+                        if arquivo_preco:
+                            arquivos_contexto.append(arquivo_preco)
+                        if arquivo_ref:
+                            arquivos_contexto.append(arquivo_ref)
                         
                         dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
                         
@@ -430,6 +403,7 @@ def main() -> None:
 
                         with open(caminho_txt_cenas, "w", encoding="utf-8") as f:
                             f.write(roteiro_limpo)
+                            
                         log_success(f'{sufixo_rot} gerado: {caminho_txt_cenas.name}')
                         salvar_ultima_conta_env(account.email)
 
@@ -441,7 +415,8 @@ def main() -> None:
                     log_step(f'ETAPA FLOW: Gerando Variantes para o {sufixo_rot}')
                     
                     cenas = ler_e_separar_cenas(caminho_txt_cenas, qtd_cenas=qtd_cenas_anuncio)
-                    if not cenas: raise Exception(f"Nenhuma cena extraída de {caminho_txt_cenas.name}")
+                    if not cenas:
+                        raise Exception(f"Nenhuma cena extraída de {caminho_txt_cenas.name}")
                         
                     url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
                     variantes_720p_geradas = []
@@ -455,6 +430,7 @@ def main() -> None:
 
                         driver.get("about:blank")
                         time.sleep(1)
+                        
                         flow_bot = GoogleFlowAutomation(driver, url_flow=url_flw)
                         flow_bot.acessar_flow()
                         videos_cenas_parciais = []
@@ -462,26 +438,35 @@ def main() -> None:
                         for c_idx, prompt_cena in enumerate(cenas, start=1):
                             flow_bot.clicar_novo_projeto()
                             flow_bot.configurar_parametros_video()
-                            if imagem_base_flow: flow_bot.anexar_imagem(imagem_base_flow)
                             
-                            if flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300):
+                            if imagem_base_flow:
+                                flow_bot.anexar_imagem(imagem_base_flow)
+                            
+                            sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
+                            
+                            if sucesso_geracao:
                                 caminho_video = Path(prepared.task.folder_path) / f"{sufixo_rot}_Variante{v_idx}_Cena{c_idx}.mp4"
                                 if flow_bot.baixar_video_gerado(caminho_video):
                                     videos_cenas_parciais.append(caminho_video)
-                                else: raise Exception(f'Falha download Cena {c_idx}')
-                            else: raise Exception(f'Falha gerar Cena {c_idx} no Flow.')
+                                else:
+                                    raise Exception(f'Falha download Cena {c_idx}')
+                            else:
+                                raise Exception(f'Falha gerar Cena {c_idx} no Flow.')
 
                         if len(videos_cenas_parciais) == len(cenas):
                             if concatenar_cenas_720p(videos_cenas_parciais, caminho_var_720p):
                                 variantes_720p_geradas.append(caminho_var_720p)
                                 limpar_arquivos_temporarios(videos_cenas_parciais)
-                            else: raise Exception("Falha ao concatenar cenas.")
+                            else:
+                                raise Exception("Falha ao concatenar cenas.")
 
-                    if not variantes_720p_geradas: raise Exception(f"Nenhuma variante gerada para {sufixo_rot}.")
+                    if not variantes_720p_geradas:
+                        raise Exception(f"Nenhuma variante gerada para {sufixo_rot}.")
 
                     # --- JÚRI IA ---
                     log_step(f'ETAPA JÚRI: Avaliação do Diretor de Arte (IA) - {sufixo_rot}')
                     video_vencedor_720 = variantes_720p_geradas[0]
+                    
                     if len(variantes_720p_geradas) > 1:
                         gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
                         gemini_juri.abrir_gemini()
@@ -500,11 +485,12 @@ def main() -> None:
                     
                     log_success(f"✔ Upscale concluído: {video_final_1080.name}")
                     
-                    # Apaga o arquivo original de 720p do vencedor
+                    # Apaga o arquivo original de 720p do vencedor para economizar espaço
                     try:
                         video_vencedor_720.unlink()
-                        log_success(f"Vídeo vencedor original 720p apagado para economizar espaço.")
-                    except: pass
+                        log_success("Vídeo vencedor original 720p apagado para economizar espaço.")
+                    except Exception:
+                        pass
                     
                     resultados_roteiros.append({
                         'vencedor_ja_1080p': video_final_1080,
