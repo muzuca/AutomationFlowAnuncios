@@ -4,8 +4,70 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Dict
 
+# =========================================================================
+# 1. BASE DE CONHECIMENTO DE MODELOS (DIRETOR DE ELENCO)
+# =========================================================================
+PERFIS_MODELOS: Dict[str, Dict[str, str]] = {
+    "laraselect": {
+        "nome": "Lara",
+        "maos": "Mãos de pele clara com subtom rosado, dedos finos e alongados. Unhas de tamanho médio, formato oval, pintadas com um esmalte vermelho vivo e brilhante.",
+        "corpo": "Idade aparente entre 25-30 anos, pele clara. Cabelo ruivo acobreado vibrante, corte bob na altura dos ombros, textura ondulada e volumosa. Formato do rosto oval.",
+        "estilo": "Fitness chic e minimalista, focado em alta performance e conforto. Uso de conjunto de athleisure monocromático cinza escuro de alta qualidade, tênis modernos e acessórios discretos como relógio inteligente."
+    },
+    "anaindica": {
+        "nome": "Ana",
+        "maos": "Mãos de pele morena bronzeada, dedos medianos. Unhas curtas, lixadas em formato quadrado natural, com um esmalte azul escuro clássico.",
+        "corpo": "Idade aparente entre 28-33 anos, pele clara bronzeada. Cabelo loiro dourado com mechas mais claras, longo e ondulado abaixo dos ombros. Formato do rosto em coração.",
+        "estilo": "Activewear praiano e casual. Conjunto de top sem alças e legging cinza médio focado em liberdade de movimento. Visual clean complementado por relógio inteligente preto e tênis branco."
+    },
+    "paulapratica": {
+        "nome": "Paula",
+        "maos": "Mãos de pele retinta com tom quente, dedos proporcionais e firmes. Unhas curtas, formato oval, pintadas com esmalte vermelho vibrante, criando alto contraste.",
+        "corpo": "Idade aparente entre 25-30 anos, pele negra retinta. Cabelo preto azeviche, corte bob alinhado e liso na altura do queixo. Formato do rosto redondo com maxilar definido.",
+        "estilo": "Sporty glam sofisticado. O conjunto de athleisure cinza escuro ganha contraste com a pele retinta. Acessórios dourados (colar) trazem elegância ao visual esportivo."
+    },
+    "gabiessencial": {
+        "nome": "Gabi",
+        "maos": "Mãos de pele clara com subtom neutro, dedos longos e elegantes. Unhas médias, formato amendoado, com esmalte vermelho clássico intenso.",
+        "corpo": "Idade aparente entre 28-33 anos, pele clara. Cabelo castanho escuro, longo, com ondas suaves e mechas discretas. Formato do rosto oval alongado. Uso de óculos de grau modernos.",
+        "estilo": "Casual athleisure com toque 'intelectual'. A estética esportiva do conjunto cinza é equilibrada pelos óculos de grau de armação fina e o colar dourado, criando um visual prático, porém polido."
+    }
+}
+
+PERFIL_PADRAO: Dict[str, str] = {
+    "nome": "Modelo Padrão",
+    "maos": "mãos femininas de pele clara e unhas curtas",
+    "corpo": "mulher jovem",
+    "estilo": "estilo casual e moderno"
+}
+
+# =========================================================================
+# 2. DEFINIÇÃO DE ESTILOS DE FILMAGEM (DIRETOR DE FOTOGRAFIA)
+# =========================================================================
+TIPOS_FILMAGEM: Dict[str, Dict[str, str]] = {
+    "pov-maos": {
+        "nome": "POV (Ponto de Vista - Mãos)",
+        "regras": "Câmera em 1ª pessoa (POV), mostrando estritamente DUAS MÃOS da modelo interagindo de forma tátil e próxima com o produto. O fundo deve estar em desfoque (bokeh). O foco é o toque, a textura e o uso."
+    },
+    "modelocaminhando": {
+        "nome": "Modelo Caminhando",
+        "regras": "Vídeo em plano médio ou corpo inteiro, mostrando a modelo a caminhar em direção à câmera ou lateralmente. O produto deve estar em uso natural. Enquadramento dinâmico focado no movimento."
+    },
+    "modelofrontal": {
+        "nome": "Modelo Frontal (Média)",
+        "regras": "Enquadramento em plano médio (da cintura para cima). A modelo está de frente ou ligeiramente de perfil, interagindo com o produto de forma natural e premium."
+    },
+    "modelopés": {
+        "nome": "Modelo (Foco nos Pés)",
+        "regras": "Enquadramento em plano fechado (close-up) focado estritamente nos pés da modelo. Mostre o produto (calçado) em uso sobre uma superfície (calçada, tapete). Foco total no detalhe."
+    },
+    "produtoflat": {
+        "nome": "Produto Flat (Flat Lay)",
+        "regras": "NÃO use a modelo neste vídeo. Enquadramento overhead (ângulo de 90 graus de cima para baixo). O produto e acessórios estão organizados de forma plana sobre uma superfície neutra e estética. Sem movimento humano."
+    }
+}
 
 AssetRole = Literal[
     'produto_candidato',
@@ -54,6 +116,9 @@ class AdTask:
     
     # Campo adicionado para suportar metadados do roteiro (Etapa 12)
     dados_anuncio: dict = field(default_factory=dict)
+
+    # NOVO: Carrega as descrições dinâmicas da Modelo e do Tipo de Filmagem
+    descricoes_prompts: dict = field(default_factory=dict)
 
     @property
     def ordered_assets(self) -> list[TaskAsset]:

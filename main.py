@@ -383,7 +383,8 @@ def main() -> None:
                                 dados_produto=dados_anuncio,
                                 arquivo_ref=arquivo_ref,
                                 qtd_cenas=qtd_cenas_anuncio,
-                                roteiros_anteriores=roteiros_anteriores_textos
+                                roteiros_anteriores=roteiros_anteriores_textos,
+                                tarefa_obj=prepared.task
                             )
                             
                             if roteiro_bruto and "TIMEOUT" not in roteiro_bruto and "ERRO" not in roteiro_bruto:

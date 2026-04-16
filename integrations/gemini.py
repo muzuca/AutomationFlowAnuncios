@@ -27,6 +27,10 @@ EXTENSOES_IMAGEM = ('.jpg', '.jpeg', '.png', '.webp')
 # Templates de Roteirização (ENGENHARIA MASTER FULL TIKTOK SHOP - TEXTO PURO)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Templates de Roteirização (ENGENHARIA MASTER FULL TIKTOK SHOP - TEXTO PURO)
+# ──────────────────────────────────────────────────────────────────────────────
+
 _TEMPLATE_TREINO_MESTRE = """
 INSTRUÇÃO DE SISTEMA: ENGENHEIRO DE ROTEIROS TIKTOK SHOP (MASTER FULL)
 
@@ -36,74 +40,68 @@ Você é um especialista em Social Commerce. Sua tarefa é transformar fotos e v
 • MÉTRICA: Cada fala DEVE ter entre 24 e 25 palavras (para bater exatamente 8 segundos).
 • TOM: Sotaque Carioca, energia máxima, "smiling voice", ritmo acelerado.
 • VISUAL: Use sempre "REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO".
-• MOVIMENTO SEGURO (ANTI-GLITCH): Câmera 100% estática (Locked static shot. NO camera movement). Mãos e braços devem permanecer IMÓVEIS segurando os produtos, exatamente como na foto original. NUNCA crie ações de apontar se as mãos estiverem ocupadas (isso gera uma "terceira mão" e violações). Foque os movimentos APENAS em expressões faciais sutis (sorrisos, piscar de olhos, respiração natural) e na fala da modelo.
-• PREÇO (REGRA DE PRECISÃO): No áudio, arredonde SEMPRE para o próximo número inteiro imediatamente acima (Ex: R$ 30,40 vira "menos de trinta e um reais"; R$ 50,90 vira "menos de cinquenta e um reais"). Na legenda, PROIBIDO números ou frete.
+• MOVIMENTO SEGURO (ANTI-GLITCH): Câmera 100% estática (Locked static shot. NO camera movement). Mãos e braços devem permanecer IMÓVEIS segurando os produtos, exatamente como na foto original. NUNCA crie ações de apontar se as mãos estiverem ocupadas. Foque os movimentos APENAS em expressões faciais sutis (sorrisos, piscar de olhos, respiração natural) e na fala.
+• PREÇO (REGRA DE PRECISÃO): No áudio, arredonde SEMPRE para o próximo número inteiro imediatamente acima (Ex: R$ 30,40 vira "menos de trinta e um reais"). Na legenda, PROIBIDO números ou frete.
 • GATILHOS: Proibido começar com "Para tudo" ou "Gente olha". Comece com o benefício direto.
-• INDEPENDÊNCIA DE CENA (FLOW): Cada cena é tratada pela IA como um arquivo único. É PROIBIDO usar palavras como "same", "repeat", "equal to previous" ou referências a outras cenas. Repita integralmente todas as descrições técnicas de áudio, voz e câmera em todas as cenas/prompts.
-• FORMATAÇÃO (CAIXAS DE TEXTO): Os prompts de cada cena, bem como as legendas/hashtags, DEVEM ser entregues em texto direto no chat. NUNCA escreva a frase "PROMPT TÉCNICO:" em nenhum lugar. O texto deve começar diretamente na instrução de transformação ("Transform the input image...").
-• QUEBRA DE LINHA: Você DEVE inserir uma linha em branco (dar um ENTER duplo) após o final de cada cena e, OBRIGATORIAMENTE, antes de iniciar a tag [Legenda e Hashtags]. NUNCA cole a legenda na mesma linha do áudio.
+• INDEPENDÊNCIA DE CENA (FLOW): Cada cena é tratada pela IA como um arquivo único. É PROIBIDO usar palavras como "same", "repeat", "equal to previous". Repita integralmente as descrições técnicas de áudio, voz e câmera.
+• FORMATAÇÃO (CAIXAS DE TEXTO): Os prompts de cada cena DEVEM ser entregues em texto direto no chat. NUNCA escreva a frase "PROMPT TÉCNICO:". O texto deve começar diretamente na instrução de transformação.
+• QUEBRA DE LINHA: Você DEVE inserir uma linha em branco (dar um ENTER duplo) após o final de cada cena e antes da tag [Legenda e Hashtags].
 
-2. PROTOCOLO DE SAÍDA
-Você deve entregar a resposta seguindo EXATAMENTE este modelo de estrutura em texto puro, direto no chat. A descrição da cena fica acima do prompt, e o prompt fica logo abaixo:
+2. IDENTIDADE DA MODELO E ESTILO (APLICAR EM TODAS AS CENAS)
+Atenção absoluta para garantir consistência física. Você está proibido de gerar mãos ou características masculinas. Siga EXATAMENTE a identidade de {nome_modelo}:
+- MÃOS E UNHAS: {desc_maos}
+- ROSTO E CORPO: {desc_corpo}
+- ESTILO E ROUPA: {desc_estilo}
 
-[Cena 1: Título da Cena - Breve resumo da emoção da modelo]
+3. ESTILO E REGRAS DE FILMAGEM (ESTE VÍDEO É DO TIPO: {nome_tipo_video})
+- {regras_video}
+
+4. PROTOCOLO DE SAÍDA (MOLDE ESTRUTURAL)
+[Cena 1: Título da Cena - Resumo]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — Model keeps hands completely still, firmly holding the items exactly as in the photo. Subtle facial expression of joyful shock and smiling. 3️⃣ Very subtle natural breathing.
+ACTION SEQUENCE — {nome_modelo} keeps hands completely still, firmly holding the items exactly as in the photo. Subtle facial expression of joyful shock and smiling. 3️⃣ Very subtle natural breathing.
 Model voiceover says: "[Texto exato de 24-25 palavras]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
-[Cena 2: Título da Cena - Breve resumo focado nos benefícios e qualidade do produto]
+[Cena 2: Título da Cena - Foco em Qualidade]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — Model keeps hands completely still, firmly holding the items exactly as in the photo. 2️⃣ NO camera rotation or zoom. 3️⃣ Model smiles and speaks naturally to the camera.
-Model voiceover says: "[Texto exato de 24-25 palavras focando em benefícios]"
+ACTION SEQUENCE — {nome_modelo} keeps hands completely still, firmly holding the items exactly as in the photo. 2️⃣ NO camera rotation or zoom. 3️⃣ {nome_modelo} smiles and speaks naturally to the camera.
+Model voiceover says: "[Texto exato de 24-25 palavras]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
-[Cena 3: Título da Cena - Breve resumo sobre o Call to Action sem o uso de gestos com as mãos]
+[Cena 3: Título da Cena - Call to Action]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). REPLICATE THE MODEL AND SCENE EXACTLY AS SHOWN IN THE PHOTO.
 CAMERA — Vertical 9:16. Locked static shot. NO camera movement.
-ACTION SEQUENCE — Model keeps hands completely still, holding the items. Do NOT point or move arms. 2️⃣ Friendly wink and wide smile. 3️⃣ NO glitches.
-Model voiceover says: "[Texto de 24-25 palavras com preço arredondado e CTA do carrinho]"
+ACTION SEQUENCE — {nome_modelo} keeps hands completely still. Do NOT point or move arms. 2️⃣ Friendly wink and wide smile. 3️⃣ NO glitches.
+Model voiceover says: "[Texto exato de 24-25 palavras]"
 AUDIO — Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 [Legenda e Hashtags]
 [Texto curto com 10 palavras, direto, SEM preços, SEM frete, SEM link. Use emojis.]
 #hashtag1 #hashtag2 #tiktokshop
 
-1. EXEMPLO DE CONTAGEM PARA VALIDAR (25 PALAVRAS):
-"Esse kit maravilhoso sai por menos de cinquenta e um reais hoje no TikTok Shop então corre agora no carrinho pra garantir o seu antes que acabe!"
-
 DIRETRIZ FINAL: 
-Quando o usuário enviar arquivos, processe as informações e responda APENAS seguindo a estrutura visual acima. 
-Assegure-se de que cada prompt e a legenda estejam escritos em texto puro, sem emojis na sequencia do chat. 
-NUNCA invente movimentos de mãos se o modelo já estiver segurando algo na foto de referência.
-
-Confirme brevemente que entendeu a função e aguarde o comando com os arquivos.
+Confirme brevemente que entendeu a identidade de {nome_modelo}, o estilo de filmagem ({nome_tipo_video}) e a função estrutural. Aguarde os arquivos.
 """
 
-_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo roteiro para um anúncio de {qtd_cenas} cenas do produto que está sendo apresentado por uma vendedora mulher usando como referência os arquivos em anexo. 
-Na fala devemos garantir o gancho na primeira cena, falar as qualidades e benefícios do produto no meio e fazer o cta no final. 
+_TEMPLATE_ROTEIRO_EXECUCAO = """Vamos gerar um novo roteiro para um anúncio de {qtd_cenas} cenas. 
 
 Estou enviando em anexo:
-- A foto do produto sendo apresentado em estilo POV (apenas duas mãos segurando o produto)
+- Imagem Base (Reflete o estilo de filmagem: {nome_tipo_video})
 - Uma imagem com o nome do produto e o preço
 - {texto_referencia_dinamico}
 
-Extraia o nome do produto, o preço e os detalhes diretamente da leitura/transcrição das imagens/vídeo.
+Lembre-se da identidade que combinamos para {nome_modelo} ({desc_maos}, {desc_corpo}). É proibido gerar características físicas divergentes.
 
-DIRETRIZES POV (NÃO NEGOCIÁVEIS):
-Como a filmagem é em POV (Point of View), os prompts técnicos DEVEM refletir isso. 
-Especifique claramente nos prompts que a câmera é POV e mostre apenas as mãos. 
-É ESTRITAMENTE PROIBIDO gerar rostos, cabeças, corpos inteiros, pessoas ao fundo ou qualquer elemento que não esteja na imagem de referência POV, deixe isso claro em cada cena. 
-Foque apenas em movimentos sutis de respiração ou da própria luz/cenário, mantendo as mãos 100% estáticas.
-Deixe claro em cada cena que a voz é de uma mulher.
+DIRETRIZES DA FILMAGEM ({nome_tipo_video}):
+{regras_video}
 
 {instrucoes_teste_ab}
 
-Siga ESTRITAMENTE o Protocolo de Saída definido no seu treinamento em texto puro corrido, usando as tags [Cena 1: ...], [Cena 2: ...], etc.
-Lembre-se da regra de ouro: Câmera 100% estática, mãos completamente imóveis (anti-glitch), preço arredondado para cima, exatas 24-25 palavras por cena.
-Responda APENAS com as {qtd_cenas} cenas estruturadas, com a legenda separada de forma clara por um parágrafo no final, sem nenhuma introdução antes, apenas as cenas e a legenda+hashtags.
+Siga ESTRITAMENTE o Protocolo de Saída definido no seu treinamento em texto puro corrido, usando as tags [Cena 1: ...], [Cena 2: ...].
+Responda APENAS com as {qtd_cenas} cenas estruturadas e a legenda no final, sem introduções.
 """
 
 
@@ -931,7 +929,6 @@ class GeminiAnunciosViaFlow:
         else:
             foto_produto_escolhida = Path(foto_produto_escolhida)
 
-        # Contexto Rico: Coletar metadados do produto se a Etapa IA-0 tiver preenchido
         dados_anuncio = getattr(tarefa, 'dados_anuncio', {})
         nome_prod = dados_anuncio.get('nome_produto', 'o produto')
         beneficios = dados_anuncio.get('beneficios_extras', '')
@@ -939,6 +936,11 @@ class GeminiAnunciosViaFlow:
         contexto_produto = f"O produto é '{nome_prod}'. "
         if beneficios:
             contexto_produto += f"Detalhes e contexto de uso: {beneficios}. "
+
+        # --- A ÚNICA INJEÇÃO NECESSÁRIA PARA A FOTO BASE ---
+        descricoes = getattr(tarefa, 'descricoes_prompts', {})
+        perfil_modelo = descricoes.get('modelo', {})
+        desc_maos = perfil_modelo.get('maos', 'mãos femininas delicadas')
 
         imagens_geradas = []
 
@@ -949,20 +951,19 @@ class GeminiAnunciosViaFlow:
             _log(f'Gerando versão POV {v_idx}/{max_versoes} (Roteiro {numero_roteiro})...')
             caminho_parcial = dir_anuncio / f'POV_candidato_R{numero_roteiro}_v{v_idx}.png'
             
-            # Limpa o chat para cada geração para evitar que o Gemini copie a si mesmo
             self.abrir_novo_chat_limpo()
             self.anexar_arquivo_local(foto_produto_escolhida)
             
+            # --- O SEU PROMPT CIRÚRGICO ---
             prompt_geracao = (
                 f"Usando a imagem anexada como referência absoluta de forma geométrica, textura e detalhes originais, "
                 f"gere uma nova imagem ultra-realista vertical 9:16 para um anúncio.\n\n"
-                f"INFORMAÇÕES REAIS DO PRODUTO FÍSICO: {contexto_produto}\n\n"
-                f"A cena deve estar em POV (ponto de vista em primeira pessoa). "
-                f"Mostre exatamente DUAS MÃOS humanas interagindo naturalmente com o produto no mundo real, "
-                f"respeitando a escala lógica e a física do objeto descrita no contexto. "
+                f"A cena deve estar em POV com duas mãos com a seguinte característica: ({desc_maos}).\n"
+                f"Mostre apenas duas mãos interagindo naturalmente com o produto no mundo real.\n\n"
+                f"Respeite a escala lógica e a física do objeto descrita no contexto. "
                 f"O produto DEVE ser idêntico ao original, centralizado e sem deformações ou invenções no design. "
                 f"Estilo lifestyle premium com iluminação suave. Mantenha o fundo em desfoque (bokeh). "
-                f"NÃO adicione nenhum texto, elemento gráfico ou dedo a mais.\n\n"
+                f"NÃO adicione nenhum texto ou elemento gráfico.\n\n"
                 f"Responda APENAS gerando a imagem."
             )
 
@@ -993,7 +994,6 @@ class GeminiAnunciosViaFlow:
             _log('ERRO FATAL: Não foi possível gerar nenhuma das versões POV solicitadas.')
             return None
 
-        # Se só conseguiu gerar uma imagem (ex: deu erro nas outras), ela ganha por W.O.
         if len(imagens_geradas) == 1:
             _log('Apenas uma imagem POV foi gerada com sucesso. Definindo-a como vencedora por W.O.')
             shutil.copy2(str(imagens_geradas[0]), str(caminho_final))
@@ -1005,10 +1005,8 @@ class GeminiAnunciosViaFlow:
         _log(f'Iniciando Direção de Arte (Júri IA) entre as {len(imagens_geradas)} versões POV...')
         self.abrir_novo_chat_limpo()
         
-        # Anexa o produto original como gabarito
         self.anexar_arquivo_local(foto_produto_escolhida)
         
-        # Anexa todas as versões criadas
         nomes_candidatos = []
         for img in imagens_geradas:
             self.anexar_arquivo_local(img)
@@ -1031,7 +1029,6 @@ class GeminiAnunciosViaFlow:
         if not resposta or resposta in {'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
             resposta = self._aguardar_resposta_textual(timeout=60)
 
-        # Lógica de extração do vencedor (procura qual arquivo foi citado na resposta)
         vencedor_path = None
         resposta_limpa = str(resposta).lower().strip()
         
@@ -1040,39 +1037,59 @@ class GeminiAnunciosViaFlow:
                 vencedor_path = candidato
                 break
                 
-        # Se a IA enrolar e não citar nenhum nome claramente, pegamos a primeira por segurança
         if not vencedor_path:
             _log(f'Aviso: O Júri não respondeu com um nome válido. Resposta lida: {resposta[:60]}... Usando a primeira imagem como fallback.')
             vencedor_path = imagens_geradas[0]
 
         _log(f'🏆 O JÚRI DA IA DECIDIU! O POV Vencedor é: {vencedor_path.name}')
         
-        # Copia o vencedor para o nome final esperado pelo pipeline (ex: POV_VALIDADO_Roteiro1.png)
         shutil.copy2(str(vencedor_path), str(caminho_final))
         
         return caminho_final
-
+    
     def treinar_e_gerar_roteiro(
         self,
         arquivos: List[Path],
         dados_produto: Dict,
         arquivo_ref: Optional[Path] = None,
         qtd_cenas: int = 3,
-        roteiros_anteriores: Optional[List[str]] = None
+        roteiros_anteriores: Optional[List[str]] = None,
+        tarefa_obj: Optional[Any] = None # NOVO PARÂMETRO
     ) -> str:
         """
-        Gera um roteiro com base nas imagens. Se roteiros_anteriores forem fornecidos (Teste A/B), 
-        injeta uma instrução rigorosa para que a IA crie abordagens inéditas, evitando repetição.
+        Gera um roteiro com base nas imagens e na identidade da modelo validada.
         """
         id_pasta = dados_produto.get('nome', '1')
-        
         self._scroll_chat_ate_fim()
         _log(f"Iniciando fase de roteirização (Tarefa {id_pasta})")
+
+        # --- RECUPERA AS DESCRIÇÕES DA MODELO INJETADAS NO MAIN.PY/PROCESSOR.PY ---
+        descricoes = getattr(tarefa_obj, 'descricoes_prompts', {}) if tarefa_obj else {}
+        perfil_modelo = descricoes.get('modelo', {})
+        estilo_filmagem = descricoes.get('filmagem', {})
+
+        desc_maos = perfil_modelo.get('maos', 'mãos femininas')
+        desc_corpo = perfil_modelo.get('corpo', 'mulher jovem')
+        desc_estilo = perfil_modelo.get('estilo', 'estética casual')
+        desc_nome_modelo = perfil_modelo.get('nome', 'A Modelo')
+
+        nome_tipo_video = estilo_filmagem.get('nome', 'Vídeo Padrão')
+        regras_video = estilo_filmagem.get('regras', '')
+
+        # --- PREPARA O PROMPT MESTRE COM A IDENTIDADE ---
+        prompt_mestre = _TEMPLATE_TREINO_MESTRE.format(
+            nome_modelo=desc_nome_modelo,
+            desc_maos=desc_maos,
+            desc_corpo=desc_corpo,
+            desc_estilo=desc_estilo,
+            nome_tipo_video=nome_tipo_video,
+            regras_video=regras_video
+        )
         
         self.abrir_novo_chat_limpo()
         
-        _log("Enviando Prompt Mestre de Treinamento...")
-        prompt_mestre_linear = " ".join(_TEMPLATE_TREINO_MESTRE.split())
+        _log(f"Enviando Prompt Mestre de Treinamento focado na modelo {desc_nome_modelo}...")
+        prompt_mestre_linear = " ".join(prompt_mestre.split())
         
         res_treino = self.enviar_prompt(prompt_mestre_linear, timeout=60, aguardar_resposta=True)
         if res_treino == 'ERRO_F5':
@@ -1081,36 +1098,34 @@ class GeminiAnunciosViaFlow:
         for arq in arquivos:
             caminho = Path(arq)
             if not caminho.exists():
-                _log(f'Aviso: Arquivo de contexto não encontrado: {caminho.name}')
                 continue
             self.anexar_arquivo_local(caminho)
 
-        texto_referencia_dinamico = "Nenhuma referência extra fornecida."
+        texto_referencia_dinamico = "Nenhuma referência extra."
         if arquivo_ref:
             extensao = str(arquivo_ref).lower()
             if extensao.endswith(('.mp4', '.mov', '.webm', '.avi')):
-                texto_referencia_dinamico = "O vídeo com fala validada que deve ser usado como base."
+                texto_referencia_dinamico = "O vídeo com fala validada."
             else:
-                texto_referencia_dinamico = "Outra imagem com a descrição detalhada que deve ser usada para compor os detalhes das explicacoes do produto."
+                texto_referencia_dinamico = "Outra imagem detalhada para compor a explicação."
 
-        # LÓGICA DE TESTE A/B (VARIAÇÃO DE ROTEIROS)
         instrucoes_teste_ab = ""
         if roteiros_anteriores:
             _log(f"Injetando {len(roteiros_anteriores)} roteiro(s) anterior(es) para forçar variação no Teste A/B...")
             textos_anteriores = "\n\n".join([f"--- ROTEIRO ANTERIOR ---\n{r}\n------------------------" for r in roteiros_anteriores])
             instrucoes_teste_ab = (
                 "\n\nATENÇÃO MÁXIMA (TESTE A/B): Eu já criei os roteiros abaixo para este produto. "
-                "Sua tarefa agora é criar um roteiro 100% INÉDITO e DIFERENTE. "
-                "Mude completamente o ângulo de venda, utilize um gancho inicial radicalmente diferente na Cena 1, "
-                "e destaque benefícios que não foram o foco principal na versão anterior. "
-                "Aja como um copywriter criativo testando uma nova hipótese de venda para um público diferente.\n\n"
-                f"{textos_anteriores}\n\n"
-                "LEMBRE-SE: Apesar do texto e da abordagem mudarem completamente, você DEVE manter as regras "
-                "técnicas de 24-25 palavras, câmera estática, formato POV e arredondamento de preço."
+                "Crie um roteiro 100% INÉDITO e DIFERENTE mudando a abordagem de venda.\n\n"
+                f"{textos_anteriores}\n"
             )
 
         prompt_execucao = _TEMPLATE_ROTEIRO_EXECUCAO.format(
             qtd_cenas=qtd_cenas,
+            nome_modelo=desc_nome_modelo,
+            desc_maos=desc_maos,
+            desc_corpo=desc_corpo,
+            nome_tipo_video=nome_tipo_video,
+            regras_video=regras_video,
             texto_referencia_dinamico=texto_referencia_dinamico,
             instrucoes_teste_ab=instrucoes_teste_ab
         )

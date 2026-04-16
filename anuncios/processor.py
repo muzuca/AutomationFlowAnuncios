@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 from pathlib import Path
-from anuncios.models import AdTask, PreparedTaskResult, TaskAsset
+from anuncios.models import AdTask, PreparedTaskResult, TaskAsset, PERFIS_MODELOS, PERFIL_PADRAO, TIPOS_FILMAGEM
 
 def _detect_role_by_position(index: int) -> str:
     if index == 0:
@@ -72,6 +72,32 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
                 if not task_dir.name.isdigit():
                     continue
 
+                # =========================================================================
+                # IDENTIFICAÇÃO DE MODELO E FILMAGEM (DIRETOR DE ARTE AUTOMÁTICO)
+                # =========================================================================
+                nome_modelo = model_dir.name.lower()
+                nome_filmagem = shoot_type_dir.name.lower()
+                
+                # 1. Encontrar o Perfil da Modelo (ex: laraselect -> dicionário da Lara)
+                modelo_identificada = PERFIL_PADRAO
+                for chave, perfil in PERFIS_MODELOS.items():
+                    if chave in nome_modelo:
+                        modelo_identificada = perfil
+                        break
+
+                # 2. Encontrar o Tipo de Filmagem (ex: pov-maos -> regras de POV)
+                filmagem_identificada = TIPOS_FILMAGEM.get("pov-maos") # Fallback pro POV se n achar
+                for chave, regras in TIPOS_FILMAGEM.items():
+                    if chave in nome_filmagem:
+                        filmagem_identificada = regras
+                        break
+                        
+                # Consolida as descrições em um dicionário único para a Tarefa
+                descricoes_prompts = {
+                    "modelo": modelo_identificada,
+                    "filmagem": filmagem_identificada
+                }
+
                 # AJUSTE CIRÚRGICO: Preenchimento automático de metadados para a Etapa 12
                 # Você pode futuramente expandir isso para ler um JSON ou TXT na pasta
                 metadados_produto = {
@@ -90,7 +116,8 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
                         shoot_type=shoot_type_dir.name,
                         status='pendente',
                         folder_path=task_dir,
-                        dados_anuncio=metadados_produto 
+                        dados_anuncio=metadados_produto,
+                        descricoes_prompts=descricoes_prompts # <--- INJEÇÃO DOS DADOS AQUI!
                     )
                 )
 
@@ -145,4 +172,4 @@ def prepare_task(task: AdTask) -> PreparedTaskResult:
 
 def describe_task(task: AdTask) -> str:
     parts = [f'{asset.role}: {asset.path.name}' for asset in task.assets]
-    return f'Tarefa {task.task_id} | modelo={task.model_name} | filmagem={task.shoot_type} | arquivos=[{", ".join(parts)}]'
+    return f'Tarefa {task.task_id} | modelo={task.model_name} | filmagem={task.shoot_type} | arquivos=[{", ".join(parts)}]' 
