@@ -36,13 +36,13 @@ PERFIS_MODELOS: Dict[str, Dict[str, str]] = {
     },
     "laraferreira": {
         "nome": "Lara Ferreira",
-        "maos": "Mãos de pele clara com subtom neutro, dedos proporcionais. Unhas curtas, lixadas em formato natural e com aparência limpa, sem esmalte escuro ou com base translúcida.",
+        "maos": "Mãos de pele clara com subtom neutro, dedos proporcionais. Unhas curtas, lixadas em formato natural e com aparência limpa, com esmalte vermelho clássico intenso.",
         "corpo": "Idade aparente entre 25-30 anos, pele clara. Cabelo loiro com raízes levemente mais escuras, comprimento médio na altura dos ombros, textura ondulada, repicada e com volume natural. Formato do rosto oval com um sorriso aberto e marcante.",
         "estilo": "Fitness moderno e clean. Veste um conjunto de activewear (top esportivo clássico e legging de cintura alta) liso em tom azul-acinzentado (slate blue). Acessórios minimalistas incluindo um colar dourado delicado com pingente redondo pequeno, um smartwatch de pulseira clara e tênis esportivos cinza/azulados com sola de borracha natural."
     },
     "vidaachadinhos": {
         "nome": "Vida Achadinhos Da Vida",
-        "maos": "Mãos de pele clara, dedos longos e delicados. Unhas curtas, formato quadrado natural, mantendo uma aparência minimalista e prática para o dia a dia.",
+        "maos": "Mãos de pele clara, dedos longos e delicados. Unhas curtas, formato quadrado natural, mantendo uma aparência minimalista e prática para o dia a dia, com esmalte vermelho clássico intenso.",
         "corpo": "Idade aparente entre 25-30 anos, pele clara com brilho natural. Cabelo loiro claro, corte bob curto e liso na altura do queixo, levemente jogado para o lado. Rosto com maxilar e maçãs do rosto bem definidos e um sorriso suave.",
         "estilo": "Athleisure minimalista e elegante. Veste um conjunto esportivo com textura levemente canelada em tom verde-oliva acinzentado escuro (top esportivo de alças médias e legging com costuras modeladoras). Visual limpo complementado apenas por um smartwatch branco esportivo no pulso esquerdo e tênis brancos clássicos casuais."
     }
