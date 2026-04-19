@@ -10,8 +10,10 @@ import re
 import time
 import shutil
 import pyperclip
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim
 
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -22,10 +24,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 EXTENSOES_IMAGEM = ('.jpg', '.jpeg', '.png', '.webp')
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Templates de Roteirização (ENGENHARIA MASTER FULL TIKTOK SHOP - TEXTO PURO)
-# ──────────────────────────────────────────────────────────────────────────────
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Templates de Roteirização (ENGENHARIA MASTER FULL TIKTOK SHOP - TEXTO PURO)
@@ -105,9 +103,9 @@ Responda APENAS com as {qtd_cenas} cenas estruturadas e a legenda no final, sem 
 """
 
 
-def _log(msg: str) -> None:
-    ts = time.strftime('%H:%M:%S')
-    print(f'[{ts}] [GEMINI-IA] {msg}')
+# Atalho para manter o prefixo [GEMINI-IA] automaticamente neste arquivo
+def _log(msg: str):
+    log_base(msg, prefixo="GEMINI-IA")
 
 
 class GeminiAnunciosViaFlow:
@@ -116,52 +114,154 @@ class GeminiAnunciosViaFlow:
         self.url_gemini = url_gemini
         self.wait = WebDriverWait(driver, timeout, poll_frequency=0.1)
         self.timeout = timeout
+        
+        # --- ZERANDO DIRETÓRIO DE LOGS A CADA CICLO ---
+        self.pasta_logs_visao = Path("logs_visao")
+        if self.pasta_logs_visao.exists():
+            for arquivo_png in self.pasta_logs_visao.glob("*.png"):
+                try:
+                    arquivo_png.unlink()
+                except Exception:
+                    pass
+        self.pasta_logs_visao.mkdir(exist_ok=True)
 
     def abrir_gemini(self) -> None:
-        if 'gemini.google.com' not in self.driver.current_url:
-            _log('Abrindo Gemini...')
-            self.driver.get(self.url_gemini) 
-            self.wait.until(lambda d: 'gemini.google.com' in d.current_url)
+        _log('Abrindo Gemini e validando estado da tela...')
+        self.driver.get(self.url_gemini) 
+        time.sleep(3.0) # Tempo vital pro Angular carregar a página inicial
+        
+        # Esquece a URL. Vamos procurar a caixa de texto ou botão de chat.
+        tela_liberada = False
+        seletores_chat = [
+            'rich-textarea div[contenteditable="true"]',
+            'textarea[placeholder="Ask Gemini"]',
+            'div[aria-label*="Message"]'
+        ]
+        
+        for seletor in seletores_chat:
+            try:
+                elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
+                if elementos and any(el.is_displayed() for el in elementos):
+                    tela_liberada = True
+                    break
+            except Exception:
+                pass
+                
+        # Se a tela não tem onde digitar, caiu em onboarding ou bloqueio
+        if not tela_liberada:
+            _log('⚠️ Interface de chat não detectada logo após acessar a URL. Acionando o trator...')
+            salvar_print_debug(self.driver,"BLOQUEIO_INICIAL_DETECTADO")
             
-            # Validação instantânea da URL
-            time.sleep(1.5) # Dá 1 segundo e meio pro Google decidir se vai redirecionar
-            if '/app' not in self.driver.current_url:
-                _log(f'🚨 URL redirecionada para a página inicial ({self.driver.current_url}). Conta inoperante.')
-                raise Exception("Conta redirecionada para fora do Gemini App. Trocando de conta.")
+            if not self._superar_bloqueios_e_onboarding():
+                raise Exception("Conta presa em tela inicial/onboarding. Abortando tentativa.")
+            
+
+    def _superar_bloqueios_e_onboarding(self) -> bool:
+        """
+        Função MEGA GENÉRICA estilo 'Trator'.
+        Lida com Privacy Hub, Termos de Uso e Onboarding de contas novas.
+        """
+        salvar_print_debug(self.driver,"VERIFICANDO_BLOQUEIOS_UI")
+        
+        # Palavras-chave atualizadas para o carrossel de 'Privacy' e 'Extensions'
+        palavras_chave = [
+            'chat with gemini', 'conversar com', 'i agree', 'concordo', 'aceito',
+            'continue', 'continuar', 'next', 'próximo', 'got it', 'entendi',
+            'try gemini', 'experimentar', 'ok', 'aceitar', 'accept',
+            'more', 'mais', 'done', 'concluir', 'finalizar', 'agree', 'no, thanks', 'não, obrigado'
+        ]
+        
+        # Carrosséis de onboarding podem ter até 5 telas (Extensions, Privacy, etc)
+        for rodada in range(6):
+            # 1. Tenta ESC para fechar modais simples
+            try:
+                body = self.driver.find_element(By.TAG_NAME, 'body')
+                body.send_keys(Keys.ESCAPE)
+                time.sleep(0.5)
+            except Exception:
+                pass
+                
+            clicou_algo = False
+            
+            # 2. Busca botões por texto (Case Insensitive)
+            xpath_condicoes = " or ".join([f"contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{p}')" for p in palavras_chave])
+            xpath_monstro = f"//button[{xpath_condicoes}] | //a[{xpath_condicoes}] | //span[{xpath_condicoes}]/ancestor::button"
+            
+            # Seletores de botões azuis do Google (mdc-button)
+            seletores_css = [
+                'button.action-button', 'button.mdc-button--raised', 'a.mdc-button--raised',
+                'button[jsname="LgbsSe"]', '[data-test-id="gemini-chat-button"]',
+                'div[role="dialog"] button', '.mat-mdc-dialog-actions button'
+            ]
+            
+            candidatos = []
+            try:
+                candidatos.extend(self.driver.find_elements(By.XPATH, xpath_monstro))
+            except Exception: pass
+            
+            for css in seletores_css:
+                try:
+                    candidatos.extend(self.driver.find_elements(By.CSS_SELECTOR, css))
+                except Exception: pass
+            
+            # 3. Clica no primeiro que estiver visível
+            for btn in candidatos:
+                try:
+                    if btn.is_displayed() and btn.is_enabled():
+                        texto_btn = (btn.text or btn.get_attribute('aria-label') or '').strip().replace('\n', ' ')
+                        _log(f"🎯 Trator encontrou: '{texto_btn[:30]}'. Clicando...")
+                        js_click(self.driver,btn)
+                        clicou_algo = True
+                        time.sleep(2.0) # Espera a animação do modal
+                        break 
+                except Exception:
+                    continue
+            
+            # Verifica se a caixa de texto finalmente apareceu (objetivo final)
+            try:
+                textarea = self.driver.find_elements(By.CSS_SELECTOR, 'rich-textarea div[contenteditable="true"]')
+                if textarea and textarea[0].is_displayed():
+                    _log("✅ Interface de chat liberada!")
+                    return True
+            except Exception:
+                pass
+
+            if not clicou_algo:
+                break
+                
+        return False
 
     def _forcar_modelo_pro(self) -> None:
-        """Procura o seletor de modelo do Gemini e força a opção Pro, evitando Fast e Thinking."""
         _log('Verificando/Forçando modelo Pro...')
         
-        # Pausa inicial vital: Dá tempo para o Angular renderizar o botão após criar o chat
-        time.sleep(2.0) 
+        # 1. Garante que não tem modais atrapalhando o clique
+        self._superar_bloqueios_e_onboarding()
+        time.sleep(1.0) 
         
         for tentativa in range(1, 4):
             try:
-                # 1. Procura o botão de abrir o menu
                 menu_btn_elements = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="bard-mode-menu-button"], button[aria-label="Open mode picker"]')
-                if not menu_btn_elements:
-                    _log(f'Botão de modelo ainda não apareceu (Tentativa {tentativa}/3)...')
+                if not menu_btn_elements or not menu_btn_elements[0].is_displayed():
+                    _log(f'Botão de modelo ainda não apareceu ou está coberto (Tentativa {tentativa}/3)...')
+                    
+                    # Tenta dar mais um ESC para garantir que menus ocultos sumam
+                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
                     time.sleep(1.5)
                     continue 
 
                 menu_btn = menu_btn_elements[0]
-                
-                # 2. Lê o texto do botão para ver se já estamos no Pro
                 texto_atual = (menu_btn.text or '').strip().lower()
+                
                 if 'pro' in texto_atual and 'thinking' not in texto_atual and 'pensamento' not in texto_atual:
                     _log('✅ Modelo Pro já está ativo.')
-                    return # Sucesso, sai da função
+                    return 
                     
                 _log(f'Modelo atual é "{texto_atual}". Abrindo menu de seleção (Tentativa {tentativa}/3)...')
-                
-                # Traz o botão pro meio da tela e clica
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_btn)
                 time.sleep(0.5)
-                self._js_click(menu_btn)
-                time.sleep(1.5) # Espera a animação do menu abrir
+                js_click(self.driver,menu_btn)
+                time.sleep(1.5) 
                 
-                # 3. Procura a opção Pro exata
                 seletores_pro = [
                     'button[data-mode-id="e6fa609c3fa255c0"]',
                     'button[data-test-id="bard-mode-option-pro"]'
@@ -171,19 +271,78 @@ class GeminiAnunciosViaFlow:
                 for seletor in seletores_pro:
                     opcoes_pro = self.driver.find_elements(By.CSS_SELECTOR, seletor)
                     for opcao in opcoes_pro:
-                        # Trava de segurança extra
                         texto_opcao = (opcao.text or '').strip().lower()
                         if 'thinking' not in texto_opcao and 'pensamento' not in texto_opcao and 'fast' not in texto_opcao:
-                            self._js_click(opcao)
+                            if opcao.is_displayed():
+                                js_click(self.driver,opcao)
+                                clicou_pro = True
+                                break
+                    if clicou_pro:
+                        break
+
+                if clicou_pro:
+                    time.sleep(1.5) 
+                    _log('✅ Modelo Pro selecionado com sucesso.')
+                    salvar_print_debug(self.driver,"PRO_SELECIONADO_SUCESSO")
+                    return 
+                else:
+                    _log('⚠️ Opção Pro não encontrada no DOM. Fechando menu e recomeçando...')
+                    ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                    time.sleep(1.0)
+                    
+            except Exception as e:
+                _log(f'⚠️ Erro na interface ao tentar mudar pro Pro ({e}). Tentando novamente...')
+                time.sleep(1.0)
+                
+        _log('🚨 Aviso: Esgotaram as tentativas de forçar o modelo Pro. Seguindo em frente...')
+
+    def _forcar_modelo_pro(self) -> None:
+        _log('Verificando/Forçando modelo Pro...')
+        time.sleep(2.0) 
+        
+        for tentativa in range(1, 4):
+            try:
+                menu_btn_elements = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="bard-mode-menu-button"], button[aria-label="Open mode picker"]')
+                if not menu_btn_elements:
+                    _log(f'Botão de modelo ainda não apareceu (Tentativa {tentativa}/3)...')
+                    time.sleep(1.5)
+                    continue 
+
+                menu_btn = menu_btn_elements[0]
+                texto_atual = (menu_btn.text or '').strip().lower()
+                
+                if 'pro' in texto_atual and 'thinking' not in texto_atual and 'pensamento' not in texto_atual:
+                    _log('✅ Modelo Pro já está ativo.')
+                    return 
+                    
+                _log(f'Modelo atual é "{texto_atual}". Abrindo menu de seleção (Tentativa {tentativa}/3)...')
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_btn)
+                time.sleep(0.5)
+                js_click(self.driver,menu_btn)
+                time.sleep(1.5) 
+                
+                seletores_pro = [
+                    'button[data-mode-id="e6fa609c3fa255c0"]',
+                    'button[data-test-id="bard-mode-option-pro"]'
+                ]
+                
+                clicou_pro = False
+                for seletor in seletores_pro:
+                    opcoes_pro = self.driver.find_elements(By.CSS_SELECTOR, seletor)
+                    for opcao in opcoes_pro:
+                        texto_opcao = (opcao.text or '').strip().lower()
+                        if 'thinking' not in texto_opcao and 'pensamento' not in texto_opcao and 'fast' not in texto_opcao:
+                            js_click(self.driver,opcao)
                             clicou_pro = True
                             break
                     if clicou_pro:
                         break
 
                 if clicou_pro:
-                    time.sleep(1.5) # Espera a interface confirmar e fechar o menu
+                    time.sleep(1.5) 
                     _log('✅ Modelo Pro selecionado com sucesso.')
-                    return # Missão cumprida, sai da função
+                    salvar_print_debug(self.driver,"PRO_SELECIONADO_SUCESSO")
+                    return 
                 else:
                     _log('⚠️ Opção Pro não encontrada no DOM. Fechando menu e recomeçando...')
                     ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
@@ -196,22 +355,12 @@ class GeminiAnunciosViaFlow:
         _log('🚨 Aviso: Esgotaram as tentativas de forçar o modelo Pro. Seguindo em frente...')
 
     def abrir_novo_chat_limpo(self) -> None:
-        self._scroll_chat_ate_fim()
+        scroll_ao_fim(self.driver)
         _log('Criando novo chat nativamente via botão da interface...')
         
-        if 'gemini.google.com' not in self.driver.current_url:
-            self.abrir_gemini()
+        # Faz a chamada inicial que inclui a verificação estrita do URL
+        self.abrir_gemini() 
             
-        # VALIDAÇÃO AGRESSIVA DE URL (O "Pulo do Gato")
-        if '/app' not in self.driver.current_url:
-            _log('Forçando URL principal do Gemini...')
-            self.driver.get(self.url_gemini)
-            time.sleep(1.5)
-            
-            if '/app' not in self.driver.current_url:
-                _log(f'🚨 CONTA INOPERANTE! Redirecionou para: {self.driver.current_url}')
-                raise Exception('Conta bloqueada/inoperante. O Gemini redirecionou a URL.')
-
         try:
             seletores_botao = [
                 'side-nav-action-button[data-test-id="new-chat-button"] a',
@@ -224,7 +373,7 @@ class GeminiAnunciosViaFlow:
                 botoes = self.driver.find_elements(By.CSS_SELECTOR, seletor)
                 for btn in botoes:
                     if btn.is_displayed():
-                        self._js_click(btn)
+                        js_click(self.driver,btn)
                         _log('Botão "New Chat" clicado.')
                         clicou = True
                         break
@@ -232,62 +381,24 @@ class GeminiAnunciosViaFlow:
                     break
                     
             if not clicou:
-                _log('Botão de Novo Chat não encontrado. Forçando URL raiz...')
-                self.driver.get(self.url_gemini)
-                time.sleep(2)
+                _log('Botão de Novo Chat não encontrado. Forçando URL novamente...')
+                self.abrir_gemini() # Tenta forçar e verificar bloqueios mais uma vez
                 
-                if '/app' not in self.driver.current_url:
-                    _log(f'🚨 CONTA INOPERANTE APÓS REFRESH! Redirecionou para: {self.driver.current_url}')
-                    raise Exception('Conta bloqueada/inoperante. O Gemini redirecionou a URL.')
-                
-            fim = time.time() + 10
-            while time.time() < fim:
-                self._scroll_chat_ate_fim()
-                respostas = self.driver.find_elements(By.CSS_SELECTOR, 'model-response')
-                if not respostas:
-                    break
-                time.sleep(0.1)
-                
+            # Testa se a caixa de texto de facto carregou no ecrã
             self._obter_textarea_prompt()
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
             _log('Novo chat pronto para receber comandos.')
+            salvar_print_debug(self.driver,"CHAT_NOVO_CRIADO")
             
-            # --- NOVO: Força o Gemini para a versão PRO logo após iniciar o chat ---
             self._forcar_modelo_pro()
             
-        except TimeoutException:
-            _log('🚨 ERRO RÁPIDO: Campo de prompt não encontrado.')
-            raise Exception('Interface do Gemini falhou em inicializar o chat.')
+        except TimeoutException as e:
+            _log(f'🚨 ERRO RÁPIDO ao criar novo chat: {e}')
+            salvar_print_debug(self.driver,"ERRO_NOVO_CHAT_TIMEOUT")
+            raise Exception(f'A interface do Gemini falhou ao inicializar o chat: {e}')
         except Exception as e:
             _log(f'Erro ao tentar criar novo chat: {e}')
             raise
-
-    def _js_click(self, element: WebElement) -> None:
-        self.driver.execute_script('arguments[0].click();', element)
-
-    def _scroll_chat_ate_fim(self) -> None:
-        """Scroll Nuclear: Desce tudo que pode rolar na página."""
-        try:
-            self.driver.execute_script(
-                """
-                const scrollers = document.querySelectorAll('infinite-scroller, #chat-history, .chat-history-scroll-container, .conversation-container');
-                scrollers.forEach(scroller => {
-                    scroller.scrollTop = scroller.scrollHeight;
-                });
-                
-                const allElements = document.querySelectorAll('*');
-                for (let i = 0; i < allElements.length; i++) {
-                    let el = allElements[i];
-                    if (el.scrollHeight > el.clientHeight) {
-                        el.scrollTop = el.scrollHeight;
-                    }
-                }
-                
-                window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight);
-                """
-            )
-        except Exception:
-            pass
 
     def fechar_popup_tardio_chrome_no_gemini(self) -> None:
         seletores = [
@@ -304,8 +415,9 @@ class GeminiAnunciosViaFlow:
                         continue
                     texto = (el.text or el.get_attribute('aria-label') or '').strip()
                     if any(t in texto for t in textos_alvo):
-                        self._js_click(el)
+                        js_click(self.driver,el)
                         _log(f'Popup tardio do Chrome tratado: {texto}')
+                        salvar_print_debug(self.driver,"POPUP_TARDIO_FECHADO")
                         return
             except Exception:
                 pass
@@ -338,8 +450,11 @@ class GeminiAnunciosViaFlow:
             'div[contenteditable="true"][role="textbox"]',
             '.initial-input-area-container textarea',
             'textarea[placeholder="Ask Gemini"]',
+            'div[aria-label*="Message"]',
+            'div.editor-container div[contenteditable="true"]'
         ]
-        fim = time.time() + 10
+        
+        fim = time.time() + 8
         while time.time() < fim:
             for seletor in seletores:
                 try:
@@ -349,8 +464,23 @@ class GeminiAnunciosViaFlow:
                             return el
                 except Exception:
                     pass
-            time.sleep(0.1)
-        raise TimeoutException('Campo de prompt do Gemini nao encontrado.')
+            time.sleep(0.5)
+            
+        # Se chegou aqui, passou 8 segundos e a caixa não apareceu.
+        _log("⚠️ Caixa de digitação sumiu! Chamando trator para tentar recuperar a tela...")
+        if self._superar_bloqueios_e_onboarding():
+            # Trator rodou, vamos tentar achar a caixa uma última vez
+            for seletor in seletores:
+                try:
+                    elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
+                    for el in elementos:
+                        if el.is_displayed() and el.is_enabled():
+                            return el
+                except Exception:
+                    pass
+                    
+        salvar_print_debug(self.driver,"ERRO_TEXTAREA_MORTA")
+        raise TimeoutException('Falha irrecuperável: A caixa de digitação não existe na tela atual.')
 
     def _obter_botao_enviar(self) -> Optional[WebElement]:
         seletores = ['button[aria-label="Send message"]', '.send-button-container button', '.initial-input-area-container .send-icon']
@@ -369,17 +499,17 @@ class GeminiAnunciosViaFlow:
         return None
 
     def _aguardar_upload_estabilizar(self, timeout: int = 20, is_video: bool = False) -> None:
-        """Dupla estratégia: rápida para imagens, minuciosa para vídeos."""
         fim = time.time() + timeout
+        
+        salvar_print_debug(self.driver,f"UPLOAD_AGUARDANDO_INICIO_isvideo_{is_video}")
         
         if is_video:
             _log(f'Aguardando estabilização do upload de VÍDEO (max {timeout}s)...')
             while time.time() < fim:
                 try:
-                    self._scroll_chat_ate_fim()
+                    scroll_ao_fim(self.driver)
                     carregando = False
                     try:
-                        # --- SELETORES ATUALIZADOS PARA O LOADER DE VÍDEO ---
                         loaders = self.driver.find_elements(By.CSS_SELECTOR, 'mat-progress-bar, .uploading, [role="progressbar"], mat-spinner, .loading-spinner, [aria-label*="loading"], [aria-label*="uploading"]')
                         if loaders and any(l.is_displayed() for l in loaders):
                             carregando = True
@@ -389,18 +519,17 @@ class GeminiAnunciosViaFlow:
                     if not carregando:
                         btn = self._obter_botao_enviar()
                         if btn is not None:
-                            # --- PAUSA EXTRA APENAS PARA VÍDEO (Garante que a UI atualizou) ---
                             time.sleep(2.0)
                             _log('Upload de vídeo estabilizado e botão de envio habilitado.')
+                            salvar_print_debug(self.driver,"UPLOAD_VIDEO_OK")
                             return
                 except Exception:
                     pass
                 time.sleep(1.0)
         else:
-            # Lógica ORIGINAL e rápida para imagens
             while time.time() < fim:
                 try:
-                    self._scroll_chat_ate_fim()
+                    scroll_ao_fim(self.driver)
                     btn = self._obter_botao_enviar()
                     if btn is not None:
                         _log('Botão de envio habilitado apos upload.')
@@ -410,6 +539,7 @@ class GeminiAnunciosViaFlow:
                 time.sleep(0.1)
                 
         _log('Aviso: upload nao confirmou estado pronto dentro do tempo esperado.')
+        salvar_print_debug(self.driver,"UPLOAD_TIMEOUT_AVISO")
 
     def _texto_limpo(self, txt: str) -> str:
         txt = (txt or '').replace('\r', '\n')
@@ -434,7 +564,6 @@ class GeminiAnunciosViaFlow:
         return False
 
     def _gemini_esta_processando(self) -> bool:
-        """Sensor de Microfone."""
         try:
             mics = self.driver.find_elements(By.CSS_SELECTOR, 'button.speech_dictation_mic_button, button[aria-label="Microphone"]')
             if not mics:
@@ -449,25 +578,55 @@ class GeminiAnunciosViaFlow:
             return False
 
     def _extrair_texto_resposta_recente(self) -> str:
-        """Extrai o texto da última resposta da IA de forma direta e simplificada."""
-        seletores = ['model-response', 'message-content', '.model-response-text']
+        """Nova Lógica (Blindada Suprema): Busca o texto em múltiplos níveis do DOM e ignora erros de stale element."""
+        salvar_print_debug(self.driver,"EXTRAINDO_TEXTO_PROCURANDO")
+        
+        # Seletores atualizados: pega do mais específico pro mais genérico
+        seletores = [
+            'model-response .model-response-text',
+            'model-response message-content',
+            'model-response',
+            # Fallbacks caso o Gemini esconda o componente principal num Shadow DOM
+            '.message-content',
+            'div[data-test-id="model-response"]'
+        ]
         
         for seletor in seletores:
             try:
+                time.sleep(0.5) # Dá tempo pro Angular processar
                 elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                if not elementos: continue
-                
-                el = elementos[-1]
-                txt_bruto = self.driver.execute_script("return arguments[0].textContent;", el)
-                txt = self._texto_limpo(txt_bruto or '').strip()
-                
-                # FILTRO SIMPLIFICADO EM LINHA: Ignora apenas se for vazio ou lixo de interface/carregamento
-                if not txt or any(lixo in txt for lixo in ["Show thinking", "Gemini said", "Carregando"]):
+                if not elementos: 
                     continue
                 
+                el = elementos[-1]
+                
+                # Tenta pegar o texto por 3 caminhos diferentes direto na engine do Chrome
+                script = """
+                    return arguments[0].textContent || 
+                           arguments[0].innerText || 
+                           arguments[0].value || '';
+                """
+                txt_bruto = self.driver.execute_script(script, el)
+                txt = self._texto_limpo(txt_bruto).strip()
+                
+                if not txt:
+                    continue
+                    
+                # Ignora as mensagens de carregamento da interface em PT e EN
+                lixos_carregamento = [
+                    "show thinking", "gemini said", "carregando", 
+                    "is thinking", "pensando", "analisando"
+                ]
+                if any(lixo in txt.lower() for lixo in lixos_carregamento):
+                    continue
+                
+                salvar_print_debug(self.driver,"EXTRAINDO_TEXTO_SUCESSO")
                 return txt
-            except Exception:
+            except Exception as e:
+                # Silenciamos o erro mas seguimos tentando os próximos seletores
                 pass
+                
+        salvar_print_debug(self.driver,"EXTRAINDO_TEXTO_FALHA_DOM")
         return ''
 
     def _interpretar_resposta_binaria(self, texto: str) -> Optional[bool]:
@@ -490,93 +649,105 @@ class GeminiAnunciosViaFlow:
         return None
 
     def _aguardar_fim_analise(self, timeout: int = 120) -> bool:
-        """Aguarda o Gemini terminar monitorando o estado dos botões da UI em tempo real"""
-        _log('Gemini processando... rastreando botões (modo inteligente).')
+        """
+        Lógica baseada puramente no estado dos botões (Stop vs Mic/Send).
+        Identifica quando o processamento terminou validando o sumiço do Stop
+        e o reaparecimento do Microfone ou Seta de Envio.
+        """
+        _log('Gemini processando... Monitorando estado dos botões (Stop / Mic / Send).')
+        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_INICIO")
         fim = time.time() + timeout
         
-        # Pausa minúscula (0.5s) só para o navegador registrar o clique de enviar e virar o botão pra Stop
-        time.sleep(0.5) 
-        
-        # XPaths mapeados exatamente a partir da DOM do Gemini
-        xpath_stop = "//button[@aria-label='Stop response' or contains(@class, 'stop')]"
-        xpath_idle = "//button[@aria-label='Microphone' or @aria-label='Send message' or @data-node-type='speech_dictation_mic_button']"
+        # Pausa obrigatória para o Angular processar o clique e renderizar o botão Stop
+        time.sleep(3.0)
+        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_POS_3SEG")
         
         while time.time() < fim:
             try:
-                # 1. Verifica se o botão "Stop response" está na tela (IA gerando)
-                stop_btns = self.driver.find_elements(By.XPATH, xpath_stop)
-                is_stopping = any(b.is_displayed() for b in stop_btns)
+                # 1. Procura ativamente pelo botão de STOP na tela
+                # O HTML que você mandou tem a classe 'stop' e aria-label 'Stop response'
+                botoes_stop = self.driver.find_elements(By.CSS_SELECTOR, 'button.stop, button[aria-label="Stop response"], button[aria-label*="Stop"]')
                 
-                if not is_stopping:
-                    # 2. Se o Stop não está lá, verifica se Mic ou Send voltaram a ficar ativos
-                    idle_btns = self.driver.find_elements(By.XPATH, xpath_idle)
-                    is_idle = any(b.is_displayed() and b.is_enabled() for b in idle_btns)
+                if botoes_stop and any(b.is_displayed() for b in botoes_stop):
+                    # Se o Stop está na tela, a IA inegavelmente ainda está gerando texto
+                    pass
+                else:
+                    salvar_print_debug(self.driver,"AGUARDANDO_APARECER_RESPOSTA")
+                    # 2. O Stop SUMIU. Precisamos confirmar se a interface voltou ao estado ocioso
+                    # Procura pelo botão do Microfone (caixa vazia) OU botão de Enviar (caixa com texto)
+                    botoes_ociosos = self.driver.find_elements(
+                        By.CSS_SELECTOR, 
+                        'button.speech_dictation_mic_button, button[aria-label*="microphone" i], button[aria-label*="Microfone" i], button.send-button, button[aria-label*="Send" i]'
+                    )
                     
-                    if is_idle:
-                        # Extra-check: garante que não sobrou nenhum loader de 'generating' solto
-                        if not self._gemini_esta_processando():
+                    if botoes_ociosos and any(b.is_displayed() for b in botoes_ociosos):
+                        # Confirmação dupla: garante que spinners globais de página também não estão rodando
+                        loaders = self.driver.find_elements(By.CSS_SELECTOR, 'mat-progress-bar, .uploading, [role="progressbar"]')
+                        if not any(l.is_displayed() for l in loaders):
+                            _log("Gatilho detectado: Botão Stop sumiu e interface voltou a ficar ociosa. Geração concluída!")
+                            time.sleep(1.0)
+                            salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_SUCESSO")
                             return True
                             
             except StaleElementReferenceException:
-                pass # A DOM atualizou neste milissegundo. Ignora e tenta no próximo ciclo.
+                # A DOM piscou exatamente na hora da leitura. Ignora e tenta no próximo loop.
+                pass
             except Exception:
                 pass
                 
-            # Polling rápido: checa a tela 5 vezes por segundo. Zero esperas cegas.
-            time.sleep(0.2) 
+            # Verifica a tela a cada meio segundo
+            time.sleep(0.5)
             
-        _log(f'Aviso: Timeout de {timeout}s atingido aguardando botões do Gemini.')
+        _log(f'Aviso: Timeout de {timeout}s atingido aguardando mudança nos botões.')
+        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_TIMEOUT_FALHA")
         return False
-
-    def _aguardar_resposta_textual(self, timeout: int = 40) -> str:
-        """Aguarda a IA terminar de responder e retorna o texto capturado, sem interceptações."""
+    
+    def _aguardar_resposta_textual(self, timeout: int = 120) -> str:
         finalizou = self._aguardar_fim_analise(timeout=timeout)
         
         if not finalizou:
-            _log('⚠️ Timeout na UI. Forçando F5 Recovery...')
+            _log('⚠️ Timeout na UI detectado. Forçando F5 Recovery e reinício da etapa...')
             self.driver.refresh()
-            self.wait.until(lambda d: d.execute_script('return document.readyState') == 'complete')
-            self._scroll_chat_ate_fim()
+            time.sleep(3.0) # Tempo para o Chrome estabilizar pós-refresh
+            self._superar_bloqueios_e_onboarding()
             
-            for _ in range(10):
-                self._scroll_chat_ate_fim()
-                texto = self._extrair_texto_resposta_recente()
-                if texto:
-                    _log('F5 Recovery com sucesso. Resposta capturada.')
-                    return texto
-                time.sleep(0.5)
-            
-            return 'TIMEOUT_ANALISE'
+            # Em vez de tentar ler um texto que sumiu, retornamos um sinal de RESET
+            return 'RECOVERY_TRIGGERED'
         
-        # Pega a resposta imediatamente após o Gemini sinalizar que terminou (botão submit voltou)
-        fim = time.time() + 2.5
-        ultima = ''
+        # --- POLLING INTELIGENTE ---
+        _log("Iniciando captura dinâmica de texto (Polling)...")
+        fim = time.time() + 10.0 
+        
         while time.time() < fim:
             try:
-                self._scroll_chat_ate_fim()
+                scroll_ao_fim(self.driver)
                 texto = self._extrair_texto_resposta_recente()
-                if texto:
-                    # AQUI ESTAVA O SEU ERRO ANTIGO: O código tentava forçar o texto a virar SIM/NÃO.
-                    # Agora ele apenas pega o texto 100% puro e devolve. A função que chamou que lute pra interpretar.
+                if texto and not self._parece_texto_inutil_ui(texto):
+                    _log(f"✅ Texto capturado com sucesso.")
                     return texto
             except Exception:
                 pass
-            time.sleep(0.1)
+            time.sleep(1.5)
             
-        return ultima or 'SEM_RESPOSTA_UTIL'
-
+        return 'SEM_RESPOSTA_UTIL'
+    
     def anexar_arquivo_local(self, caminho: Path) -> None:
         caminho = Path(caminho)
         if not caminho.exists():
             raise FileNotFoundError(f'Arquivo nao encontrado: {caminho}')
         _log(f'Anexando arquivo: {caminho.name}')
+        
+        # 🚨 ADIÇÃO: Limpa qualquer lixo do Windows antes de começar
+        from integrations.utils import forcar_fechamento_janela_windows
+        forcar_fechamento_janela_windows()
+
         try:
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
             botao_mais = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[aria-label="Open upload file menu"]')))
-            self._js_click(botao_mais)
+            js_click(self.driver,botao_mais)
             
             upload_files = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'button[data-test-id="local-images-files-uploader-button"]')))
-            self._js_click(upload_files)
+            js_click(self.driver,upload_files)
             
             input_file = self._encontrar_input_file_visivel_ou_oculto()
             self.driver.execute_script(
@@ -587,6 +758,8 @@ class GeminiAnunciosViaFlow:
             _log(f'Upload iniciado para: {caminho.name}')
             
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+            # 🚨 ADIÇÃO: Se o clique acima abriu a janela por erro de foco, mata ela DE NOVO antes de injetar
+            forcar_fechamento_janela_windows()
             
             is_video = caminho.suffix.lower() in ['.mov', '.mp4', '.avi', '.mkv', '.webm']
             
@@ -596,46 +769,63 @@ class GeminiAnunciosViaFlow:
             timeout_upload = 180 if is_video else 20
             self._aguardar_upload_estabilizar(timeout=timeout_upload, is_video=is_video)
             
-        except TimeoutException as e:
-            _log(f'ERRO: Timeout ao anexar {caminho.name}: {e}')
-            raise
+        except TimeoutException:
+            # Tiramos o 'as e' para o Selenium não empurrar o lixo do stacktrace
+            _log(f'ERRO: Timeout ao anexar {caminho.name}. A interface de upload falhou/bloqueou.')
+            salvar_print_debug(self.driver,f"ERRO_ANEXO_{caminho.stem}")
+            
+            # Subimos um erro limpo para o main.py não printar lixo
+            raise Exception(f"Timeout na interface ao tentar anexar {caminho.name}.")
+            
         except Exception as e:
-            _log(f'ERRO: Falha ao anexar {caminho.name}: {e}')
-            raise
+            # Pega apenas a primeira linha do erro, ignorando todo o "\n Stacktrace: ..."
+            msg_limpa = str(e).split('\n')[0] 
+            _log(f'ERRO: Falha ao anexar {caminho.name}: {msg_limpa}')
+            raise Exception(f"Falha de sistema ao anexar {caminho.name}: {msg_limpa}")
 
     def enviar_prompt(
         self,
         prompt: str,
-        timeout: int = 60,
+        timeout: int = 120,
         aguardar_resposta: bool = True,
     ) -> str:
         _log(f'Enviando prompt ({len(prompt)} chars)...')
+        salvar_print_debug(self.driver,"PROMPT_PREPARACAO")
         
         try:
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
             textarea = self._obter_textarea_prompt()
             
             textarea.click()
-            time.sleep(0.2)
+            time.sleep(0.5)
+            
+            # === SOLUÇÃO DEFINITIVA HEADLESS: Digitação Real Fragmentada ===
+            # Sem Pyperclip, sem TrustedHTML. Remove emojis nativamente 
+            # e escreve o texto diretamente no input buffer.
+            prompt_seguro = re.sub(r'[^\u0000-\uFFFF]', '', prompt)
             
             try:
-                # Tenta colar super rápido usando a área de transferência (suporta EMOJIS nativamente)
-                pyperclip.copy(prompt)
-                textarea.send_keys(Keys.CONTROL, "v")
+                # Método blindado Selenium: Aciona a API nativa de eventos do Chrome
+                self.driver.execute_script(
+                    "arguments[0].focus(); document.execCommand('insertText', false, arguments[1]);",
+                    textarea, prompt_seguro
+                )
                 time.sleep(0.5)
-            except Exception:
-                # Fallback removendo emojis caso o pyperclip falhe (Evita erro do ChromeDriver BMP)
-                prompt_seguro = re.sub(r'[^\u0000-\uFFFF]', '', prompt)
+                # Dá um espaço final para despertar os gatilhos do Angular
+                textarea.send_keys(" ")
+            except Exception as e:
+                _log(f'Fallback de fallback ativado para digitação: {e}')
                 textarea.send_keys(prompt_seguro)
-            
+                
             _log('Prompt digitado')
+            salvar_print_debug(self.driver,"PROMPT_DIGITADO")
             
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
             
             botao_submit = None
             fim = time.time() + 5
             while time.time() < fim:
-                self._scroll_chat_ate_fim()
+                scroll_ao_fim(self.driver)
                 botao = self._obter_botao_enviar()
                 if botao is not None:
                     botao_submit = botao
@@ -645,20 +835,50 @@ class GeminiAnunciosViaFlow:
             if botao_submit is None:
                 raise TimeoutException('Botao de envio nao ficou disponivel.')
             
-            try:
-                botao_submit.click()
-            except Exception:
-                self._js_click(botao_submit)
-                
-            _log('Prompt submetido')
+            # === BLOQUEIO DE CONFIRMAÇÃO DE ENVIO ===
+            # Clica no botão e espera até a caixa de texto ESVAZIAR
+            tentativas_click = 0
+            enviou = False
             
+            while tentativas_click < 4 and not enviou:
+                try:
+                    js_click(self.driver,botao_submit)
+                except Exception:
+                    botao_submit.click()
+                
+                # Aguarda até 3 segundos para a caixa esvaziar após o clique
+                fim_esvaziamento = time.time() + 3
+                while time.time() < fim_esvaziamento:
+                    try:
+                        # Se não conseguir achar a caixa, ou ela estiver vazia, significa que a tela mudou e o envio funcionou!
+                        ta = self._obter_textarea_prompt()
+                        texto_caixa = self.driver.execute_script("return arguments[0].textContent;", ta) or ""
+                        if len(texto_caixa.strip()) < 10:
+                            enviou = True
+                            break
+                    except Exception:
+                        enviou = True
+                        break
+                    time.sleep(0.5)
+                
+                tentativas_click += 1
+            
+            if not enviou:
+                salvar_print_debug(self.driver,"ERRO_PROMPT_NAO_ENVIADO")
+                raise Exception("O botão Submit foi clicado, mas o Gemini ignorou a ação.")
+                
+            _log('Prompt submetido e processamento iniciado.')
+            salvar_print_debug(self.driver,"PROMPT_SUBMETIDO_CLICK")
+            
+            # --- CHECAGEM PÓS ENVIO ---
             fim_erro = time.time() + 4
             while time.time() < fim_erro:
                 try:
                     retry_btns = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Retry') or contains(text(), 'Tentar novamente')]/ancestor::button")
                     if retry_btns and retry_btns[0].is_displayed():
                         _log("⚠️ Erro de servidor detectado. Clicando em Retry...")
-                        self._js_click(retry_btns[0])
+                        js_click(self.driver,retry_btns[0])
+                        salvar_print_debug(self.driver,"PROMPT_ERRO_RETRY_APERTADO")
                         break
                     
                     toasts = self.driver.find_elements(By.CSS_SELECTOR, "simple-snack-bar, snack-bar-container, div[class*='snackbar'], div[class*='toast'], [role='alert']")
@@ -668,35 +888,83 @@ class GeminiAnunciosViaFlow:
                                 t_text = toast.text.lower()
                                 if "wrong" in t_text or "errado" in t_text or "error" in t_text or "tente" in t_text or "try again" in t_text:
                                     _log(f"⚠️ Erro na UI detectado ('{t_text[:30]}...'). Dando F5 e abortando...")
+                                    salvar_print_debug(self.driver,"PROMPT_ERRO_SNACKBAR_F5")
                                     self.driver.refresh()
                                     time.sleep(3)
                                     return 'ERRO_F5'
 
-                    if self._gemini_esta_processando() or self._obter_botao_enviar() is None:
-                        break
+                    if self._obter_botao_enviar() is None:
+                        break 
                 except Exception:
                     pass
                 time.sleep(0.2)
             
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
             
             if aguardar_resposta:
                 return self._aguardar_resposta_textual(timeout=timeout)
             return 'ENVIADO'
             
         except TimeoutException:
-            _log('ERRO: Timeout ao enviar prompt')
+            _log('ERRO: Timeout ao enviar prompt. A caixa de texto travou.')
+            salvar_print_debug(self.driver,"PROMPT_ERRO_TIMEOUT")
             return 'TIMEOUT'
+            
         except Exception as e:
-            _log(f'ERRO ao enviar prompt: {e}')
-            return f'ERRO: {e}'
+            msg_limpa = str(e).split('\n')[0] # Mata o stacktrace
+            _log(f'ERRO ao enviar prompt: {msg_limpa}')
+            salvar_print_debug(self.driver,"PROMPT_ERRO_CRITICO")
+            return f'ERRO: {msg_limpa}'
+
+    def avaliar_melhor_imagem_pov(self, img_a: Path, img_b: Path, nome_produto: str) -> Path:
+        """
+        Pede ao Gemini para avaliar duas variações de POV geradas pelo Flow e escolher a melhor.
+        """
+        _log(f"Iniciando Teste A/B de Imagens POV: {img_a.name} vs {img_b.name}...")
+        
+        for tentativa in range(1, 4):
+            try:
+                # Inicia um chat limpo usando as suas funções nativas
+                self.abrir_novo_chat_limpo()
+                
+                _log("Fazendo upload das duas candidatas...")
+                self.anexar_arquivo_local(img_a)
+                self.anexar_arquivo_local(img_b)
+                
+                prompt = (
+                    f"Atue como um Diretor de Arte Sênior de anúncios do TikTok.\n"
+                    f"Anexei duas imagens geradas por IA (A primeira é a Variante A, a segunda é a Variante B).\n"
+                    f"Ambas tentam criar uma foto POV hiper-realista em primeira pessoa segurando o produto '{nome_produto}'.\n\n"
+                    f"Sua missão é escolher qual das duas está mais realista e utilizável para um anúncio, julgando rigorosamente:\n"
+                    f"1. Anatomia das mãos (rejeite veementemente mãos derretidas, com dedos extras ou posições físicas impossíveis).\n"
+                    f"2. Integridade do produto (rejeite se o produto estiver muito deformado ou ilegível).\n"
+                    f"3. Naturalidade da luz e realismo geral da cena.\n\n"
+                    f"Responda APENAS com a letra 'A' se a primeira for melhor, ou 'B' se a segunda for melhor. Nenhuma palavra a mais."
+                )
+                
+                resposta = self.enviar_prompt(prompt, timeout=120, aguardar_resposta=True)
+                
+                if resposta == 'RECOVERY_TRIGGERED' or not resposta:
+                    _log("⚠️ Falha ao avaliar imagens, tentando novamente...")
+                    continue
+                
+                resposta_limpa = str(resposta).strip().upper()
+                if 'B' in resposta_limpa:
+                    _log(f"🏆 Gemini avaliou e escolheu a Variante B ({img_b.name})!")
+                    return img_b
+                else:
+                    _log(f"🏆 Gemini avaliou e escolheu a Variante A ({img_a.name})!")
+                    return img_a
+
+            except Exception as e:
+                _log(f"Erro na tentativa {tentativa} de avaliar POV: {e}")
+                time.sleep(2)
+                
+        # Fallback de segurança em caso de timeout extremo (retorna a primeira imagem)
+        _log("⚠️ Fallback: Escolhendo Variante A devido a falhas contínuas de comunicação com o Gemini.")
+        return img_a
 
     def contar_imagens_geradas(self) -> int:
-        """
-        Conta as imagens geradas de forma instantânea via JavaScript.
-        Isso elimina o gargalo de ~20 segundos do Implicit Wait do Selenium
-        ao procurar elementos que ainda não existem na tela.
-        """
         script_js = """
         const seletores = [
             'model-response:last-of-type img[data-test-id*="generated"]',
@@ -708,13 +976,10 @@ class GeminiAnunciosViaFlow:
         
         seletores.forEach(seletor => {
             document.querySelectorAll(seletor).forEach(el => {
-                // Ignora fotos de perfil, avatares ou logos
                 const src = (el.src || '').toLowerCase();
                 if (src.includes('profile/picture') || src.includes('avatar') || src.includes('logo')) {
                     return;
                 }
-                
-                // O elemento precisa ter alguma dimensão para ser considerado visível
                 if (el.getBoundingClientRect().width > 0) {
                     imagensVistas.add(src);
                 }
@@ -723,24 +988,23 @@ class GeminiAnunciosViaFlow:
         
         return imagensVistas.size;
         """
-        
         try:
             total = self.driver.execute_script(script_js)
             return int(total) if total else 0
         except Exception as e:
-            # Caso o JS falhe por algum motivo muito estranho, retorna 0 instantaneamente
             return 0
 
     def aguardar_nova_imagem(self, total_antes: int, timeout: int = 180) -> bool:
         fim = time.time() + timeout
         while time.time() < fim:
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
             total_agora = self.contar_imagens_geradas()
             if total_agora > total_antes:
                 _log(f'Nova imagem detectada: {total_agora} > {total_antes}')
                 return True
             time.sleep(0.5) 
         _log('Timeout aguardando nova imagem.')
+        salvar_print_debug(self.driver,"ERRO_GERACAO_IMAGEM_TIMEOUT")
         return False
 
     def baixar_ultima_imagem(self, destino: Path) -> bool:
@@ -748,7 +1012,8 @@ class GeminiAnunciosViaFlow:
         destino.parent.mkdir(parents=True, exist_ok=True)
         
         try:
-            self._scroll_chat_ate_fim()
+            scroll_ao_fim(self.driver)
+            salvar_print_debug(self.driver,"BAIXAR_IMG_INICIO")
             
             candidatos = [
                 'model-response:last-of-type img[data-test-id*="generated"]',
@@ -786,9 +1051,9 @@ class GeminiAnunciosViaFlow:
             clicado = False
             fim_click = time.time() + 5
             while time.time() < fim_click:
-                self._scroll_chat_ate_fim()
+                scroll_ao_fim(self.driver)
                 try:
-                    self._js_click(img_alvo)
+                    js_click(self.driver,img_alvo)
                     time.sleep(0.5)
                     if self.driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Download full size image"], button[data-test-id="download-generated-image-button"]'):
                         clicado = True
@@ -798,6 +1063,7 @@ class GeminiAnunciosViaFlow:
             
             if not clicado:
                 _log('Falha ao abrir a galeria da imagem.')
+                salvar_print_debug(self.driver,"BAIXAR_IMG_FALHA_GALERIA")
                 return False
 
             _log('Imagem gerada clicada. Galeria aberta.')
@@ -821,13 +1087,13 @@ class GeminiAnunciosViaFlow:
             downloads_dir = Path.home() / "Downloads"
             arquivos_antes = set(downloads_dir.glob("*"))
 
-            self._js_click(btn_download)
+            js_click(self.driver,btn_download)
             _log('Botão nativo de download clicado.')
 
             novo_arquivo = None
             fim_down = time.time() + 60 
             while time.time() < fim_down:
-                self._scroll_chat_ate_fim()
+                scroll_ao_fim(self.driver)
                 arquivos_agora = set(downloads_dir.glob("*"))
                 novos = arquivos_agora - arquivos_antes
                 
@@ -848,6 +1114,7 @@ class GeminiAnunciosViaFlow:
                 return True
             else:
                 _log('Timeout ao aguardar arquivo aparecer na pasta Downloads do Windows.')
+                salvar_print_debug(self.driver,"BAIXAR_IMG_TIMEOUT_WINDOWS")
                 return False
 
         except Exception as e:
@@ -867,35 +1134,84 @@ class GeminiAnunciosViaFlow:
     def _validar_imagem_produto(
         self,
         caminho_imagem: Path,
-        timeout_resposta: int = 40,
-        max_reenvios_prompt: int = 1,
+        timeout_resposta: int = 60, # Timeout aumentado conforme solicitado
+        max_reenvios_prompt: int = 2, # Vai tentar até 3 vezes na mesma conta
     ) -> bool:
+        """
+        Versão DEFINITIVA: Só reprova (retorna False) se a IA disser explicitamente 'NAO'.
+        Qualquer outro erro (Timeout, Vácuo, Bugs) gera um Novo Chat na mesma conta.
+        Se esgotar as tentativas na conta, gera uma Exceção para o main.py rodar a conta,
+        NUNCA reprovando a imagem injustamente.
+        """
         caminho_imagem = Path(caminho_imagem)
-        _log(f'Validando candidato a produto com Gemini: {caminho_imagem.name}')
         
-        # --- GARANTIA ABSOLUTA: Força o modelo Pro antes de anexar o primeiro arquivo ---
-        self._forcar_modelo_pro()
-        
-        self.anexar_arquivo_local(caminho_imagem)
-        prompt_validacao_produto = (
-            'A imagem anexada contem um produto fisico claramente visivel e identificavel? '
-            'A imagem não deve conter textos ou preços do produto. '
-            "Se o produto estiver claramente visivel, responda APENAS com 'SIM'. "
-            "Se nao houver produto visivel ou ele nao puder ser identificado, responda APENAS com 'NAO'."
-        )
-        resposta = ''
-        for tentativa in range(1, max_reenvios_prompt + 2):
-            self._scroll_chat_ate_fim()
-            if tentativa > 1:
-                _log(f'Reenviando prompt da imagem {caminho_imagem.name} (tentativa {tentativa})')
-            resposta = self.enviar_prompt(prompt_validacao_produto, timeout=timeout_resposta).strip().upper()
-            if resposta in ('TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'):
-                if tentativa <= max_reenvios_prompt:
+        # Loop de retentativas na MESMA CONTA (se max_reenvios=2, roda 3 vezes)
+        for tentativa_geral in range(1, max_reenvios_prompt + 2):
+            _log(f'Validando produto: {caminho_imagem.name} (Tentativa {tentativa_geral}/{max_reenvios_prompt + 1} na mesma conta)...')
+            salvar_print_debug(self.driver,f"IA_VALIDACAO_INICIO_T{tentativa_geral}")
+            
+            try:
+                self._forcar_modelo_pro()
+                self.anexar_arquivo_local(caminho_imagem)
+                
+                prompt_validacao = (
+                    "Você é um moderador de qualidade para anúncios do TikTok Shop. "
+                    "Analise se a imagem mostra um produto físico real em destaque e desobstruído. "
+                    "REGRAS DE VALIDAÇÃO:\n"
+                    "1. SIM: Se for uma foto real onde o produto esteja claramente visível. "
+                    "Textos editados são permitidos APENAS se estiverem em uma posição que não prejudique a visualização do produto.\n"
+                    "2. NAO: Se houver textos grandes, selos ou gráficos no meio da foto, claramente atrapalhando a foto do produto, "
+                    "ou se a imagem for apenas um design gráfico sem foto real.\n\n"
+                    "Responda APENAS 'SIM' ou 'NAO' (sem explicações)."
+                )
+
+                # Chamada do prompt
+                resposta_bruta = self.enviar_prompt(prompt_validacao, timeout=timeout_resposta)
+                
+                # --- TRATAMENTO DE TIMEOUTS E F5 ---
+                if resposta_bruta == 'RECOVERY_TRIGGERED':
+                    _log("🔄 A interface travou (Timeout). Abrindo um NOVO CHAT na mesma conta para re-tentar...")
+                    self.abrir_novo_chat_limpo()
+                    continue # Volta para o topo do FOR e tenta de novo do zero na mesma conta
+                
+                resposta = resposta_bruta.strip().upper()
+                _log(f"🕵️ Resposta da IA: '{resposta}'")
+                salvar_print_debug(self.driver,f"RESPOSTA_DA_IA_{resposta}")
+
+                # Se a resposta for um erro de leitura conhecido, tenta recuperar com novo chat
+                if resposta in ('TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'):
+                    _log(f"⚠️ Falha de leitura ({resposta}). Abrindo NOVO CHAT na mesma conta...")
                     self.abrir_novo_chat_limpo()
                     continue
-                raise TimeoutException(f'Gemini nao concluiu validacao util para {caminho_imagem.name}')
-            break
-        return resposta == 'SIM' or resposta.startswith('SIM') or '\nSIM' in resposta
+
+                # --- O VEREDICTO REAL (O SEGREDO ESTÁ AQUI) ---
+                
+                # 1. A IA aprovou?
+                if 'SIM' in resposta or resposta.startswith('SIM'):
+                    return True
+                
+                # 2. A IA reprovou EXPLICITAMENTE? (Único cenário onde retorna False)
+                if 'NAO' in resposta or 'NÃO' in resposta or resposta.startswith('NAO'):
+                    return False
+                    
+                # 3. Respondeu alguma loucura que não é nem SIM nem NAO
+                _log(f"⚠️ A IA respondeu fora do padrão. Abrindo NOVO CHAT na mesma conta...")
+                self.abrir_novo_chat_limpo()
+                continue
+
+            except Exception as e:
+                msg_limpa = str(e).splitlines()[0] if str(e).splitlines() else str(e)
+                _log(f"⚠️ Erro durante validação ({msg_limpa}). Abrindo NOVO CHAT na mesma conta...")
+                try:
+                    self.abrir_novo_chat_limpo()
+                except Exception:
+                    pass
+                
+        # --- PROTEÇÃO ABSOLUTA DA TAREFA ---
+        # Se o código chegou até aqui, significa que esgotou todas as tentativas na MESMA CONTA
+        # e o Gemini só deu Timeout ou erro. 
+        # Nós NÃO retornamos False. Levantamos um erro fatal para o main.py.
+        raise Exception("Esgotaram as tentativas de validação por falhas na interface (Timeouts/Bugs). A conta será rotacionada para preservar a imagem.")
 
     def _selecionar_foto_produto(self, tarefa: Any) -> Optional[Path]:
         candidatos = self._listar_candidatos_produto(tarefa)
@@ -917,7 +1233,7 @@ class GeminiAnunciosViaFlow:
         tarefa: Any,
         foto_produto_escolhida: Optional[Path] = None,
         max_versoes: int = 3,
-        numero_roteiro: int = 1, # Adicionado para permitir rodar por roteiro
+        numero_roteiro: int = 1, 
     ) -> Optional[Path]:
         dir_anuncio = Path(getattr(tarefa, 'folder_path', '.'))
         caminho_final = dir_anuncio / f'POV_VALIDADO_Roteiro{numero_roteiro}.png'
@@ -937,16 +1253,12 @@ class GeminiAnunciosViaFlow:
         if beneficios:
             contexto_produto += f"Detalhes e contexto de uso: {beneficios}. "
 
-        # --- A ÚNICA INJEÇÃO NECESSÁRIA PARA A FOTO BASE ---
         descricoes = getattr(tarefa, 'descricoes_prompts', {})
         perfil_modelo = descricoes.get('modelo', {})
         desc_maos = perfil_modelo.get('maos', 'mãos femininas delicadas')
 
         imagens_geradas = []
 
-        # ==========================================================
-        # ETAPA 1: GERAR MÚLTIPLAS VERSÕES (CANDIDATAS)
-        # ==========================================================
         for v_idx in range(1, max_versoes + 1):
             _log(f'Gerando versão POV {v_idx}/{max_versoes} (Roteiro {numero_roteiro})...')
             caminho_parcial = dir_anuncio / f'POV_candidato_R{numero_roteiro}_v{v_idx}.png'
@@ -954,7 +1266,6 @@ class GeminiAnunciosViaFlow:
             self.abrir_novo_chat_limpo()
             self.anexar_arquivo_local(foto_produto_escolhida)
             
-            # --- O SEU PROMPT CIRÚRGICO ---
             prompt_geracao = (
                 f"Usando a imagem anexada como referência absoluta de forma geométrica, textura e detalhes originais, "
                 f"gere uma nova imagem ultra-realista vertical 9:16 para um anúncio.\n\n"
@@ -979,7 +1290,7 @@ class GeminiAnunciosViaFlow:
 
             baixou = False
             for _ in range(3):
-                self._scroll_chat_ate_fim()
+                scroll_ao_fim(self.driver)
                 if self.baixar_ultima_imagem(caminho_parcial):
                     baixou = True
                     break
@@ -999,9 +1310,6 @@ class GeminiAnunciosViaFlow:
             shutil.copy2(str(imagens_geradas[0]), str(caminho_final))
             return caminho_final
 
-        # ==========================================================
-        # ETAPA 2: JÚRI DE CURADORIA DA IA (ESCOLHA DA MELHOR FOTO)
-        # ==========================================================
         _log(f'Iniciando Direção de Arte (Júri IA) entre as {len(imagens_geradas)} versões POV...')
         self.abrir_novo_chat_limpo()
         
@@ -1026,25 +1334,25 @@ class GeminiAnunciosViaFlow:
 
         resposta = self.enviar_prompt(prompt_juri, timeout=90, aguardar_resposta=True)
         
-        if not resposta or resposta in {'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
-            resposta = self._aguardar_resposta_textual(timeout=60)
-
-        vencedor_path = None
-        resposta_limpa = str(resposta).lower().strip()
-        
-        for candidato in imagens_geradas:
-            if candidato.name.lower() in resposta_limpa:
-                vencedor_path = candidato
-                break
-                
-        if not vencedor_path:
-            _log(f'Aviso: O Júri não respondeu com um nome válido. Resposta lida: {resposta[:60]}... Usando a primeira imagem como fallback.')
+        # Se a interface deu pau no Júri, não perdemos tempo, escolhemos a Variante 1 como Fallback instantâneo
+        if resposta in ('RECOVERY_TRIGGERED', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5', 'TIMEOUT'):
+            _log(f"⚠️ O Júri falhou por engasgo da interface ({resposta}). Assumindo Variante 1 por segurança.")
             vencedor_path = imagens_geradas[0]
+        else:
+            vencedor_path = None
+            resposta_limpa = str(resposta).lower().strip()
+            
+            for candidato in imagens_geradas:
+                if candidato.name.lower() in resposta_limpa:
+                    vencedor_path = candidato
+                    break
+                    
+            if not vencedor_path:
+                _log(f"Aviso: O Júri respondeu fora do formato ({resposta[:60]}...). Usando Variante 1.")
+                vencedor_path = imagens_geradas[0]
 
         _log(f'🏆 O JÚRI DA IA DECIDIU! O POV Vencedor é: {vencedor_path.name}')
-        
         shutil.copy2(str(vencedor_path), str(caminho_final))
-        
         return caminho_final
     
     def treinar_e_gerar_roteiro(
@@ -1054,16 +1362,13 @@ class GeminiAnunciosViaFlow:
         arquivo_ref: Optional[Path] = None,
         qtd_cenas: int = 3,
         roteiros_anteriores: Optional[List[str]] = None,
-        tarefa_obj: Optional[Any] = None # NOVO PARÂMETRO
+        tarefa_obj: Optional[Any] = None 
     ) -> str:
-        """
-        Gera um roteiro com base nas imagens e na identidade da modelo validada.
-        """
         id_pasta = dados_produto.get('nome', '1')
-        self._scroll_chat_ate_fim()
+        scroll_ao_fim(self.driver)
         _log(f"Iniciando fase de roteirização (Tarefa {id_pasta})")
+        salvar_print_debug(self.driver,"IA_ROTEIRO_INICIO")
 
-        # --- RECUPERA AS DESCRIÇÕES DA MODELO INJETADAS NO MAIN.PY/PROCESSOR.PY ---
         descricoes = getattr(tarefa_obj, 'descricoes_prompts', {}) if tarefa_obj else {}
         perfil_modelo = descricoes.get('modelo', {})
         estilo_filmagem = descricoes.get('filmagem', {})
@@ -1076,7 +1381,6 @@ class GeminiAnunciosViaFlow:
         nome_tipo_video = estilo_filmagem.get('nome', 'Vídeo Padrão')
         regras_video = estilo_filmagem.get('regras', '')
 
-        # --- PREPARA O PROMPT MESTRE COM A IDENTIDADE ---
         prompt_mestre = _TEMPLATE_TREINO_MESTRE.format(
             nome_modelo=desc_nome_modelo,
             desc_maos=desc_maos,
@@ -1085,21 +1389,7 @@ class GeminiAnunciosViaFlow:
             nome_tipo_video=nome_tipo_video,
             regras_video=regras_video
         )
-        
-        self.abrir_novo_chat_limpo()
-        
-        _log(f"Enviando Prompt Mestre de Treinamento focado na modelo {desc_nome_modelo}...")
         prompt_mestre_linear = " ".join(prompt_mestre.split())
-        
-        res_treino = self.enviar_prompt(prompt_mestre_linear, timeout=60, aguardar_resposta=True)
-        if res_treino == 'ERRO_F5':
-             _log("Aviso: Erro de F5 no treinamento. Pode impactar o fluxo final.")
-        
-        for arq in arquivos:
-            caminho = Path(arq)
-            if not caminho.exists():
-                continue
-            self.anexar_arquivo_local(caminho)
 
         texto_referencia_dinamico = "Nenhuma referência extra."
         if arquivo_ref:
@@ -1129,21 +1419,46 @@ class GeminiAnunciosViaFlow:
             texto_referencia_dinamico=texto_referencia_dinamico,
             instrucoes_teste_ab=instrucoes_teste_ab
         )
-        
         prompt_execucao_linear = " ".join(prompt_execucao.split())
-        
-        _log(f"Solicitando geração do roteiro em {qtd_cenas} cenas...")
-        resposta = self.enviar_prompt(prompt_execucao_linear, timeout=90, aguardar_resposta=True)
-        
-        return resposta
 
-    # =========================================================================
-    # AVALIAÇÃO DE VARIANTES (DIRETOR DE ARTE) VIA SELENIUM WEB
-    # =========================================================================
+        # --- LOOP BLINDADO DE RETENTATIVA NA MESMA CONTA ---
+        erros_conhecidos = ('RECOVERY_TRIGGERED', 'TIMEOUT', 'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5')
+        
+        for tentativa in range(1, 4):
+            try:
+                self.abrir_novo_chat_limpo()
+                
+                _log(f"Enviando Prompt Mestre de Treinamento (Tentativa {tentativa}/3)...")
+                res_treino = self.enviar_prompt(prompt_mestre_linear, timeout=60, aguardar_resposta=True)
+                
+                if res_treino in erros_conhecidos:
+                     _log(f"⚠️ A interface engasgou no Treinamento ({res_treino}). Reiniciando chat...")
+                     continue
+
+                # O treino deu certo, vamos anexar os arquivos
+                for arq in arquivos:
+                    caminho = Path(arq)
+                    if caminho.exists():
+                        self.anexar_arquivo_local(caminho)
+
+                _log(f"Solicitando geração do roteiro em {qtd_cenas} cenas...")
+                resposta = self.enviar_prompt(prompt_execucao_linear, timeout=120, aguardar_resposta=True)
+
+                if resposta in erros_conhecidos:
+                    _log(f"⚠️ A interface engasgou na Execução ({resposta}). Reiniciando chat...")
+                    continue
+
+                salvar_print_debug(self.driver,"IA_ROTEIRO_GERADO")
+                return resposta
+
+            except Exception as e:
+                msg_erro = str(e).splitlines()[0] if str(e).splitlines() else str(e)
+                _log(f"⚠️ Erro na tentativa {tentativa} de gerar roteiro: {msg_erro}")
+
+        # Se falhou 3 vezes na mesma conta, devolvemos erro fatal para o main rotacionar a conta
+        raise Exception("Esgotaram as tentativas de gerar roteiro devido a falhas na interface do Gemini.")
+
     def avaliar_melhor_variante_de_video(self, videos_720p: List[Path], roteiro: str) -> Path:
-        """
-        Sobe as variantes 720p na interface Web do Gemini e pede para escolher a melhor.
-        """
         if not videos_720p:
             raise ValueError("Nenhum vídeo fornecido para avaliação.")
             
@@ -1152,6 +1467,7 @@ class GeminiAnunciosViaFlow:
             return videos_720p[0]
 
         _log(f"Iniciando JÚRI DE DIREÇÃO DE ARTE para {len(videos_720p)} variantes (720p)...")
+        salvar_print_debug(self.driver,"IA_JURI_VIDEO_INICIO")
         self.abrir_novo_chat_limpo()
         
         for video in videos_720p:
@@ -1179,6 +1495,7 @@ class GeminiAnunciosViaFlow:
 
         resposta_limpa = resposta_ia.strip().replace("`", "").replace('"', "").replace("'", "")
         _log(f"Resposta do Diretor de Arte: {resposta_limpa}")
+        salvar_print_debug(self.driver,"IA_JURI_VIDEO_DECISAO")
 
         for video in videos_720p:
             if video.name.lower() in resposta_limpa.lower():
@@ -1194,45 +1511,51 @@ class GeminiAnunciosViaFlow:
         return videos_720p[0]
     
     def classificar_arquivos_e_extrair_dados(self, arquivos: list[Path]) -> dict | None:
-        """Faz o upload dos arquivos brutos, pede para a IA classificar quem é quem e extrair os textos de venda."""
-        self.abrir_novo_chat_limpo()
-        
-        nomes_arquivos = []
-        for arq in arquivos:
-            self.anexar_arquivo_local(arq)
-            nomes_arquivos.append(arq.name)
+        # Loop de 2 tentativas na mesma conta antes de desistir
+        for tentativa_geral in range(1, 3):
+            _log(f"Iniciando classificação de arquivos (Tentativa {tentativa_geral}/2 na mesma conta)...")
+            self.abrir_novo_chat_limpo()
             
-        _log(f'Solicitando classificação visual e OCR para: {", ".join(nomes_arquivos)}')
+            nomes_arquivos = []
+            for arq in arquivos:
+                try:
+                    self.anexar_arquivo_local(arq)
+                    nomes_arquivos.append(arq.name)
+                except Exception as e:
+                    _log(f"Erro ao anexar {arq.name}: {str(e).splitlines()[0]}")
+                    continue
 
-        prompt = f"""
-        Eu fiz o upload dos seguintes arquivos nesta exata ordem: {', '.join(nomes_arquivos)}.
-        Eu preciso que você aja como um organizador de arquivos e extrator de dados.
-        
-        Analise o conteúdo visual de cada arquivo e faça o mapeamento:
-        1. "arquivo_produto": O nome exato do arquivo que mostra APENAS a foto limpa do produto (ideal para recorte).
-        2. "arquivo_preco": O nome exato do arquivo que contém o PREÇO, condições ou nome do produto em texto.
-        3. "arquivo_referencia": O nome exato do arquivo restante (pode ser vídeo ou foto).
+            prompt = f"""
+            Analise o conteúdo visual destes arquivos: {', '.join(nomes_arquivos)}.
+            Mapeie e retorne um JSON com:
+            1. "arquivo_produto": Foto limpa.
+            2. "arquivo_preco": Imagem com texto de preço.
+            3. "arquivo_referencia": O restante.
+            Leia os dados: "nome_produto", "preco_condicoes", "beneficios".
+            Retorne EXCLUSIVAMENTE o JSON puro.
+            """
 
-        Além disso, leia os textos presentes na imagem de PREÇO e extraia os dados REAIS de venda:
-        - "nome_produto": Nome real do produto lido.
-        - "preco_condicoes": Valor do produto e regras de pagamento/parcelamento que você conseguir ler.
-        - "beneficios": Breve resumo de qualquer benefício ou slogan escrito.
+            resposta = self.enviar_prompt(prompt, timeout=120, aguardar_resposta=True)
 
-        Retorne EXCLUSIVAMENTE um objeto JSON válido, sem markdown (sem ```json), com estas exatas 6 chaves em minúsculo. Não escreva mais nenhuma palavra.
-        """
+            # Se o sinal de Recovery foi disparado, o loop recomeça (tentativa 2)
+            if resposta == 'RECOVERY_TRIGGERED':
+                _log("🔄 Interface reiniciada. Tentando novamente nesta conta...")
+                continue
 
-        resposta = self.enviar_prompt(prompt, timeout=120, aguardar_resposta=True)
-        if not resposta or resposta in {'TIMEOUT_ANALISE', 'SEM_RESPOSTA_UTIL', 'ERRO_F5'}:
-            resposta = self._aguardar_resposta_textual(timeout=60)
+            if not resposta or resposta in {'SEM_RESPOSTA_UTIL', 'TIMEOUT'}:
+                _log("⚠️ Resposta inválida ou vazia. Tentando Recovery manual...")
+                continue
 
-        import json
-        import re
-        # Tenta caçar o JSON na resposta bruta
-        match = re.search(r'\{.*\}', resposta, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except Exception as e:
-                _log(f'Erro ao converter JSON da IA: {e}\nResposta Bruta: {resposta}')
-                
+            # Processamento do JSON (Igual ao seu código original)
+            import json
+            match = re.search(r'\{.*\}', resposta, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except Exception as e:
+                    _log(f'Erro ao converter JSON: {e}')
+            
+            _log("⚠️ Falha ao extrair JSON da resposta. Tentando de novo...")
+            
+        _log("❌ Esgotadas as tentativas de classificação nesta conta.")
         return None

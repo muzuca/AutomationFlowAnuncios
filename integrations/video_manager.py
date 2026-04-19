@@ -8,11 +8,12 @@ import subprocess
 import time
 from pathlib import Path
 from typing import List
+from integrations.utils import _log as log_base
+
 
 def _log(msg: str):
-    ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] [VIDEO_MANAGER] {msg}")
-
+    log_base(msg, prefixo="VIDEO_MANAGER")
+    
 def _criar_lista_ffmpeg(arquivos: List[Path], lista_path: Path):
     with open(lista_path, "w", encoding="utf-8") as f:
         for arq in arquivos:

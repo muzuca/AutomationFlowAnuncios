@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from subprocess import CREATE_NO_WINDOW # Necessário para esconder a janela do driver
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -27,6 +28,7 @@ def build_chrome_options(settings: Settings) -> Options:
     options.add_argument('--silent')
     options.add_argument('--disable-logging')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument("--mute-audio")
     options.add_argument('--disable-features=OptimizationGuideModelDownloading,OptimizationHints,MediaRouter,AutofillServerCommunication')
     options.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
     options.add_experimental_option('useAutomationExtension', False)
@@ -42,29 +44,72 @@ def build_chrome_options(settings: Settings) -> Options:
         'profile.default_content_setting_values.notifications': 2,
         'credentials_enable_service': False,
         'profile.password_manager_enabled': False,
+        
+        # --- A MÁGICA PARA MATAR O POPUP NO HEADLESS=FALSE ---
+        'profile.default_content_settings.popups': 0,
+        'protocol_handler.excluded_schemes': {
+            'afc': True,
+            'mailto': True,
+            'ms-windows-store': True,
+            'intent': True, # Comum em deep links mobile/web
+            'about': True,
+            'unknown': True
+        }
     }
     options.add_experimental_option('prefs', prefs)
 
     return options
 
 
-def create_driver(settings: Settings) -> webdriver.Chrome:
+def create_driver(settings):
+    # Passamos a usar a função build_chrome_options que você já tinha criado
+    # Assim herdamos as preferências de download e otimizações gerais de lá.
     options = build_chrome_options(settings)
+    
+    # ==========================================================
+    # CONFIGURAÇÕES HEADLESS (MODO INVISÍVEL DINÂMICO)
+    # ==========================================================
+    # Garantimos que ele respeita a configuração do .env, tratando possíveis formatos de string
+    is_headless = str(settings.chrome_headless).lower() in ['true', '1', 'yes']
 
-    service = Service(
-        ChromeDriverManager().install(),
-        log_output=os.devnull,
-    )
+    if is_headless:
+        # O '=new' usa o novo motor do Chrome que é muito mais difícil de ser detectado como bot.
+        options.add_argument('--headless=new')
+        
+        # CRÍTICO: No modo headless, o Chrome abre numa janela minúscula por padrão.
+        # Isso quebra cliques em botões (como os do Gemini e Flow). Force o tamanho Full HD:
+        options.add_argument('--window-size=1920,1080')
+        
+        # Otimizações de memória para rodar em background sem travar
+        options.add_argument('--disable-gpu')
+        
+        # Mascara o User-Agent e flags de segurança apenas no headless para tentar driblar o login
+        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36')
+        options.add_argument("--disable-web-security")
+        options.add_argument("--allow-running-insecure-content")
 
+    # Ambas configurações (headless ou não) precisam dessas opções de estabilidade em servidor/background
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    
+    # ==========================================================
+
+    # Inicializa o serviço silencioso (Mata a mensagem ws://127.0.0.1)
+    service = Service(ChromeDriverManager().install())
+    service.creation_flags = CREATE_NO_WINDOW
+    
+    # Inicializa o driver
     driver = webdriver.Chrome(service=service, options=options)
-    driver.implicitly_wait(settings.chrome_implicit_wait)
-    driver.set_page_load_timeout(settings.chrome_page_load_timeout)
-
-    driver.execute_cdp_cmd(
-        'Page.addScriptToEvaluateOnNewDocument',
-        {'source': "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"},
-    )
-
+    
+    # Comando mágico Anti-Detecção (Executa no navegador instanciado)
+    # Impede que o Google leia a variável "webdriver = true" e barre o login
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    })
+    
+    # Define timeout curto para os comandos do selenium não congelarem a tela
+    driver.implicitly_wait(2)
+    
     return driver
 
 

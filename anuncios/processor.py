@@ -1,11 +1,10 @@
 # arquivo: anuncios/processor.py
 # descricao: Responsavel por ler a estrutura de diretorios do Drive,
 # detectar tarefas pendentes e orquestrar a classificacao dos arquivos
-# da tarefa (produto, preco, referencia) baseando-se em prefixos da IA
-# ou, como fallback, ordem de criacao e nome.
 
 from __future__ import annotations
 from pathlib import Path
+import time
 from anuncios.models import AdTask, PreparedTaskResult, TaskAsset, PERFIS_MODELOS, PERFIL_PADRAO, TIPOS_FILMAGEM
 
 def _detect_role_by_position(index: int) -> str:
@@ -16,23 +15,34 @@ def _detect_role_by_position(index: int) -> str:
     return 'referencia_extra'
 
 def _parse_task_assets(task: AdTask) -> AdTask:
-    # Filtra arquivos, ignorando os arquivos gerados pelo bot
     files = []
-    for item in task.folder_path.iterdir():
-        if item.is_file():
-            nome_arquivo = item.name.lower()
-            if not (nome_arquivo.startswith("roteiro") or nome_arquivo.startswith("01_escolhido") or nome_arquivo.startswith("02_alternativa") or nome_arquivo.startswith("[backup_720p]") or "pov_validado" in nome_arquivo):
-                files.append(item)
+    extensoes_validas = {'.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.avi', '.mkv'}
+    
+    # Adicionado try-except para evitar quebra silenciosa por falta de permissao de leitura no Drive
+    try:
+        for item in task.folder_path.iterdir():
+            if item.is_file():
+                nome_arquivo = item.name.lower()
+                extensao = item.suffix.lower()
                 
-    # A MÁGICA AQUI: Ordena PRIMEIRO pela data de criação (st_ctime). 
-    # Em caso de EMPATE exato (mesmo segundo), usa o Nome Alfabético como desempate.
+                if extensao in extensoes_validas:
+                    if not (nome_arquivo.startswith("roteiro") or 
+                            nome_arquivo.startswith("01_escolhido") or 
+                            nome_arquivo.startswith("02_alternativa") or 
+                            nome_arquivo.startswith("[backup_720p]") or 
+                            "pov_validado" in nome_arquivo or
+                            "pov_candidato" in nome_arquivo):
+                        files.append(item)
+    except Exception as e:
+        print(f"Aviso: Erro ao ler pasta {task.folder_path}. Detalhe: {e}")
+                
     files.sort(key=lambda item: (item.stat().st_ctime, item.name.lower()))
 
     assets: list[TaskAsset] = []
     for index, file_path in enumerate(files):
         asset = TaskAsset(
             path=file_path,
-            modified_at=file_path.stat().st_ctime, # Ajustado para st_ctime
+            modified_at=file_path.stat().st_ctime, 
             extension=file_path.suffix.lower(),
             role=_detect_role_by_position(index),
         )
@@ -41,11 +51,11 @@ def _parse_task_assets(task: AdTask) -> AdTask:
     task.assets = assets
     task.validated_product_asset = None
     
-    # Preenche os papéis baseado na ordem
     task.price_info_asset = assets[1] if len(assets) > 1 else None
     task.reference_asset = assets[2] if len(assets) > 2 else None
 
     return task
+
 
 def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
     base_path = Path(products_base_dir)
@@ -54,74 +64,73 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
     if not base_path.exists():
         raise RuntimeError(f'Pasta base de produtos não encontrada: {base_path}')
 
-    for model_dir in base_path.iterdir():
-        if not model_dir.is_dir():
+    # BUSCA RESILIENTE: Procura por todas as pastas que se chamam 'pendente' dentro do Drive
+    # Isso resolve o problema caso a estrutura de pastas tenha sido alterada acidentalmente.
+    pastas_pendentes = base_path.rglob("pendente")
+
+    for pending_dir in pastas_pendentes:
+        if not pending_dir.is_dir():
             continue
 
-        for shoot_type_dir in model_dir.iterdir():
-            if not shoot_type_dir.is_dir():
+        # A estrutura esperada é: Base_Dir / Nome_Modelo / Tipo_Filme / pendente / [ID_Tarefa]
+        try:
+            tipo_filme_dir = pending_dir.parent
+            modelo_dir = tipo_filme_dir.parent
+        except Exception:
+            continue # Se a hierarquia nao fizer sentido, ignora
+
+        # Varre o conteudo da pasta pendente procurando a subpasta do ID da tarefa (ex: "1", "2")
+        for task_dir in pending_dir.iterdir():
+            if not task_dir.is_dir():
                 continue
+            
+            # Identificação de Modelo e Filmagem baseada nas pastas acima
+            nome_modelo = modelo_dir.name.lower()
+            nome_filmagem = tipo_filme_dir.name.lower()
+            
+            modelo_identificada = PERFIL_PADRAO
+            for chave, perfil in PERFIS_MODELOS.items():
+                if chave in nome_modelo:
+                    modelo_identificada = perfil
+                    break
 
-            pending_dir = shoot_type_dir / 'pendente'
-            if not pending_dir.exists() or not pending_dir.is_dir():
-                continue
+            filmagem_identificada = TIPOS_FILMAGEM.get("pov-maos") 
+            for chave, regras in TIPOS_FILMAGEM.items():
+                if chave in nome_filmagem:
+                    filmagem_identificada = regras
+                    break
+                    
+            descricoes_prompts = {
+                "modelo": modelo_identificada,
+                "filmagem": filmagem_identificada
+            }
 
-            for task_dir in pending_dir.iterdir():
-                if not task_dir.is_dir():
-                    continue
-                if not task_dir.name.isdigit():
-                    continue
+            metadados_produto = {
+                'modelo': modelo_dir.name,
+                'tom': 'Feminino, persuasivo e comercial',
+                'duracao': '15',
+                'nome_produto': modelo_dir.name, 
+                'beneficios': 'Prático, alta qualidade e indispensável',
+                'nome': task_dir.name
+            }
 
-                # =========================================================================
-                # IDENTIFICAÇÃO DE MODELO E FILMAGEM (DIRETOR DE ARTE AUTOMÁTICO)
-                # =========================================================================
-                nome_modelo = model_dir.name.lower()
-                nome_filmagem = shoot_type_dir.name.lower()
-                
-                # 1. Encontrar o Perfil da Modelo (ex: laraselect -> dicionário da Lara)
-                modelo_identificada = PERFIL_PADRAO
-                for chave, perfil in PERFIS_MODELOS.items():
-                    if chave in nome_modelo:
-                        modelo_identificada = perfil
-                        break
+            tarefa_bruta = AdTask(
+                task_id=task_dir.name,
+                model_name=modelo_dir.name,
+                shoot_type=tipo_filme_dir.name,
+                status='pendente',
+                folder_path=task_dir,
+                dados_anuncio=metadados_produto,
+                descricoes_prompts=descricoes_prompts
+            )
+            
+            tarefa_com_arquivos = _parse_task_assets(tarefa_bruta)
+            
+            # Condição crucial: Só adiciona à fila se houver arquivos de mídia brutos
+            if len(tarefa_com_arquivos.assets) > 0:
+                tasks.append(tarefa_com_arquivos)
 
-                # 2. Encontrar o Tipo de Filmagem (ex: pov-maos -> regras de POV)
-                filmagem_identificada = TIPOS_FILMAGEM.get("pov-maos") # Fallback pro POV se n achar
-                for chave, regras in TIPOS_FILMAGEM.items():
-                    if chave in nome_filmagem:
-                        filmagem_identificada = regras
-                        break
-                        
-                # Consolida as descrições em um dicionário único para a Tarefa
-                descricoes_prompts = {
-                    "modelo": modelo_identificada,
-                    "filmagem": filmagem_identificada
-                }
-
-                # AJUSTE CIRÚRGICO: Preenchimento automático de metadados para a Etapa 12
-                # Você pode futuramente expandir isso para ler um JSON ou TXT na pasta
-                metadados_produto = {
-                    'modelo': model_dir.name,
-                    'tom': 'Feminino, persuasivo e comercial',
-                    'duracao': '15',
-                    'nome_produto': model_dir.name, 
-                    'beneficios': 'Prático, alta qualidade e indispensável',
-                    'nome': task_dir.name
-                }
-
-                tasks.append(
-                    AdTask(
-                        task_id=task_dir.name,
-                        model_name=model_dir.name,
-                        shoot_type=shoot_type_dir.name,
-                        status='pendente',
-                        folder_path=task_dir,
-                        dados_anuncio=metadados_produto,
-                        descricoes_prompts=descricoes_prompts # <--- INJEÇÃO DOS DADOS AQUI!
-                    )
-                )
-
-    tasks.sort(key=lambda item: (item.model_name.lower(), item.shoot_type.lower(), int(item.task_id)))
+    tasks.sort(key=lambda item: (item.model_name.lower(), item.shoot_type.lower(), item.task_id))
     return tasks
 
 def get_next_pending_task(products_base_dir: str) -> AdTask | None:
@@ -129,19 +138,12 @@ def get_next_pending_task(products_base_dir: str) -> AdTask | None:
     return tasks[0] if tasks else None
 
 def prepare_task(task: AdTask) -> PreparedTaskResult:
-    """
-    Classifica os arquivos pela inteligência da IA (Prefixos 00_, 01_, 02_).
-    Se não houver prefixo, recua para a ordem alfabética.
-    """
-    task = _parse_task_assets(task)
-    
     candidatos = []
     reference = None
     price_asset = None
 
     assets = task.assets
 
-    # Primeiro, tentamos classificar pelos prefixos inteligentes que a IA colocou
     for asset in assets:
         nome_arquivo = asset.path.name.lower()
         if nome_arquivo.startswith('00_produto'):
@@ -152,7 +154,6 @@ def prepare_task(task: AdTask) -> PreparedTaskResult:
             if not reference:
                 reference = asset
 
-    # Fallback (Se por acaso a IA-0 não rodou, usa a ordem cega 0, 1, 2)
     if not candidatos and not price_asset and not reference:
         for index, asset in enumerate(assets):
             if index == 0:
@@ -172,4 +173,4 @@ def prepare_task(task: AdTask) -> PreparedTaskResult:
 
 def describe_task(task: AdTask) -> str:
     parts = [f'{asset.role}: {asset.path.name}' for asset in task.assets]
-    return f'Tarefa {task.task_id} | modelo={task.model_name} | filmagem={task.shoot_type} | arquivos=[{", ".join(parts)}]' 
+    return f'Tarefa {task.task_id} | modelo={task.model_name} | filmagem={task.shoot_type} | arquivos=[{", ".join(parts)}]'
