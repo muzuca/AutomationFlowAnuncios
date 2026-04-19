@@ -1,5 +1,5 @@
 # arquivo: .gitignore
-# descricao: protege o repositório contra o versionamento de credenciais, ambientes locais, arquivos temporários, mídias operacionais, binários dependentes da máquina e artefatos de execução que não devem subir para o GitHub.
+# descricao: protege o repositório contra credenciais, logs de execução, capturas de tela de debug e mídias geradas.
 
 # =============================================================================
 # Credenciais e segredos
@@ -33,15 +33,17 @@ ENV/
 
 
 # =============================================================================
-# Logs e histórico
+# Logs e histórico (ATUALIZADO)
 # =============================================================================
 *.log
+logs_execucao.txt
 historico_roteiros.json
 historico/
+logs_visao/
 
 
 # =============================================================================
-# Mídia operacional e arquivos pesados
+# Mídia operacional e arquivos pesados (MANTIDO)
 # =============================================================================
 *.mp4
 *.mov
@@ -76,4 +78,4 @@ ffprobe
 # =============================================================================
 Thumbs.db
 desktop.ini
-.DS_Storec
+.DS_Store
