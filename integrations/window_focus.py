@@ -6,6 +6,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException, NoAlertPresentException
 import time
 
+# Importa o verificador de headless
+from integrations.utils import is_headless
+
 
 def browser_ready_for_next_step(driver) -> bool:
     """
@@ -67,13 +70,9 @@ def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_betwe
     # =====================================================================
     # CHECAGEM DE HEADLESS E "CLICK + ESC" FÍSICO
     # =====================================================================
-    try:
-        # Lê as configurações internas do driver para saber se 'headless' foi ativado
-        args_chrome = driver.capabilities.get('goog:chromeOptions', {}).get('args', [])
-        is_headless = any('headless' in str(arg).lower() for arg in args_chrome)
-        
-        if not is_headless:
-            print("[LOGIN] Modo visual detetado. Disparando Click e ESC para matar popup do SO...")
+    if not is_headless(driver):
+        print("[LOGIN] Modo visual detetado. Disparando Click e ESC para matar popup do SO...")
+        try:
             import pyautogui
             
             # Clica numa área segura do ecrã (x=200, y=200) para garantir que o Chrome tem o foco
@@ -86,16 +85,18 @@ def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_betwe
             pyautogui.press('esc')
             print("[LOGIN] ✔ Click e ESC aplicados com sucesso.")
             
-    except ImportError:
-        print("[LOGIN] ⚠️ PyAutoGUI não instalado. Tentando ESC via Selenium ActionChains...")
-        from selenium.webdriver.common.action_chains import ActionChains
-        from selenium.webdriver.common.keys import Keys
-        try:
-            ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-        except Exception:
-            pass
-    except Exception as e:
-        print(f"[LOGIN] Aviso ao tentar click/esc físico: {e}")
+        except ImportError:
+            print("[LOGIN] ⚠️ PyAutoGUI não instalado. Tentando ESC via Selenium ActionChains...")
+            from selenium.webdriver.common.action_chains import ActionChains
+            from selenium.webdriver.common.keys import Keys
+            try:
+                ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[LOGIN] Aviso ao tentar click/esc físico: {e}")
+    else:
+        print("[LOGIN] Modo Headless detetado. Ignorando clique físico (PyAutoGUI) para não interferir no monitor.")
     # =====================================================================
 
     # Continua com a verificação normal do DOM

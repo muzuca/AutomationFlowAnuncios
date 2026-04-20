@@ -36,6 +36,7 @@ ENV/
 # Logs e histórico (ATUALIZADO)
 # =============================================================================
 *.log
+*.txt
 logs_execucao.txt
 historico_roteiros.json
 historico/

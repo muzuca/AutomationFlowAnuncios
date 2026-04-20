@@ -6,6 +6,15 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
+def is_headless(*args, **kwargs) -> bool:
+    """
+    Verifica direto no .env se o navegador foi configurado para rodar invisível.
+    Ignora cliques físicos (PyAutoGUI) se estiver True.
+    """
+    load_dotenv(override=True)
+    # Pega o valor do .env, joga pra minúsculo e vê se é 'true'
+    return os.getenv("CHROME_HEADLESS", "False").lower() == "true"
+
 def _log(msg: str, prefixo: str = "SISTEMA") -> None:
     """
     Logger centralizado. 

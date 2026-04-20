@@ -24,6 +24,7 @@ from integrations.google_login import login_google, open_gemini
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
+from anuncios.prompts import PROMPT_DESCRICAO_DIRETA_FRONTAL, PROMPT_DESCRICAO_DIRETA_POV, PROMPT_DESCRICAO_DIRETA_CAMINHANDO, PROMPT_DESCRICAO_DIRETA_PES, PROMPT_DESCRICAO_DIRETA_FLAT
 
 
 def setup_logging() -> None:
@@ -131,7 +132,7 @@ def extrair_e_salvar_legenda(texto_limpo: str, caminho_legenda: Path) -> None:
     match = re.search(r"\[[Ll]egenda.*?\](.*)", texto_limpo, re.IGNORECASE | re.DOTALL)
     if match:
         texto_legenda = match.group(1).strip()
-        marcadores_fim = ["1. EXEMPLO", "DIRETRIZ FINAL", "Confirme brevemente"]
+        marcadores_fim = ["1. EXEMPLO", "DIRETRIZ FINAL", "Confirme brevemente", "SISTEMA CALIBRADO"]
         for marcador in marcadores_fim:
             idx = texto_legenda.upper().find(marcador.upper())
             if idx != -1:
@@ -285,7 +286,7 @@ def main() -> None:
                     if not caminho_metadados.exists():
                         log_step('ETAPA IA-0: Organizando arquivos e extraindo metadados de venda')
                         # Pega apenas os arquivos crus (ignora arquivos ocultos e coisas já geradas)
-                        arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "pov" not in f.name.lower()]
+                        arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "img_base" not in f.name.lower()]
 
                         if len(arquivos_brutos) >= 2:
                             dados_ia = gemini.classificar_arquivos_e_extrair_dados(arquivos_brutos)
@@ -371,6 +372,10 @@ def main() -> None:
                     if arquivo_ref:
                         log_success(f'Arquivo de referencia mapeado: {arquivo_ref.name}')
 
+                    # --- IDENTIFICAÇÃO DO TIPO DE PASTA ---
+                    partes_caminho_task = Path(prepared.task.folder_path).parts
+                    estilo_filmagem_pasta = partes_caminho_task[-3] if len(partes_caminho_task) >= 3 else ""
+
                     # --- CHECKPOINT INTELIGENTE: EXISTE AO MENOS UM ROTEIRO? ---
                     # Verifica se existe o Roteiro1 ou qualquer outro válido para não abrir o Gemini à toa
                     tem_roteiro_pronto = False
@@ -384,10 +389,10 @@ def main() -> None:
                         log_success("🚀 CHECKPOINT: Roteiro detectado na pasta. Pulando login no Gemini e indo pro Flow.")
                         precisa_abrir_gemini = False
                         
-                        # Define a imagem base para o Flow (usa o POV do Roteiro 1 ou o padrão)
-                        imagem_base_flow = Path(task.folder_path) / "POV_VALIDADO_Roteiro1.png"
+                        # Define a imagem base para o Flow (usa a ImgBase do Roteiro 1 ou o padrão)
+                        imagem_base_flow = Path(task.folder_path) / "IMG_BASE_VALIDADA_Roteiro1.png"
                         if not imagem_base_flow.exists():
-                            imagem_base_flow = Path(task.folder_path) / "POV_VALIDADO.png"
+                            imagem_base_flow = Path(task.folder_path) / "IMG_BASE_VALIDADA.png"
                     else:
                         precisa_abrir_gemini = True
 
@@ -437,7 +442,7 @@ def main() -> None:
                         sufixo_rot = f"Roteiro{r_idx}"
                         caminho_txt_cenas = Path(prepared.task.folder_path) / f"{sufixo_rot}_Cenas.txt"
                         caminho_txt_legenda = Path(prepared.task.folder_path) / f"{sufixo_rot}_Legenda.txt"
-                        caminho_pov_roteiro = Path(prepared.task.folder_path) / f"POV_VALIDADO_{sufixo_rot}.png"
+                        caminho_img_base_roteiro = Path(prepared.task.folder_path) / f"IMG_BASE_VALIDADA_{sufixo_rot}.png"
 
                         # --- CHECKPOINT MESTRE: SE O VÍDEO FINAL JÁ EXISTE, PULA TUDO DESSE ROTEIRO ---
                         arquivos_1080_existentes = list(Path(prepared.task.folder_path).glob(f"01_Escolhido_{sufixo_rot}_Variante*_1080p.mp4"))
@@ -456,18 +461,32 @@ def main() -> None:
                             })
                             continue  # Vai direto para o próximo r_idx (Roteiro2)
 
-                        # --- CHECKPOINT POV INDIVIDUAL POR ROTEIRO ---
+                        # --- CHECKPOINT IMAGEM BASE INDIVIDUAL POR ROTEIRO ---
                         imagem_base_flow = None
-                        if caminho_pov_roteiro.exists():
-                            log_success(f'🚀 CHECKPOINT POV ALCANÇADO: {caminho_pov_roteiro.name} já existe.')
-                            imagem_base_flow = caminho_pov_roteiro
+                        if caminho_img_base_roteiro.exists():
+                            log_success(f'🚀 CHECKPOINT IMAGEM BASE ALCANÇADO: {caminho_img_base_roteiro.name} já existe.')
+                            imagem_base_flow = caminho_img_base_roteiro
                         else:
                             if fonte_imagem == "FLOW":
-                                log_step(f'ETAPA FLOW-IMG: Gerando imagem POV para {sufixo_rot} via FLOW (A/B Test)...')
+                                log_step(f'ETAPA FLOW-IMG: Gerando Imagem Base para {sufixo_rot} via FLOW (A/B Test)...')
                                 url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
                                 flow_bot_img = GoogleFlowAutomation(driver, url_flow=url_flw)
                                 
-                                # Puxando toda a inteligência da sua estrutura dinâmica
+                                # --- BUSCA DE IDENTIDADE (MODELO) VIA .ENV ---
+                                path_task = Path(prepared.task.folder_path)
+                                # Sobe níveis para achar o nome da pasta pai (Ex: LaraSelect)
+                                nome_identidade = path_task.parents[2].name 
+                                
+                                # Tenta achar o arquivo na pasta configurada no .env
+                                foto_modelo = Path(settings.modelos_dir) / f"{nome_identidade}.png"
+                                if not foto_modelo.exists():
+                                    foto_modelo = Path(settings.modelos_dir) / f"{nome_identidade}.jpg"
+                                
+                                cam_modelo_param = foto_modelo if foto_modelo.exists() else None
+                                if cam_modelo_param:
+                                    log_success(f"Modelo identificado via .env: {foto_modelo.name}")
+                                # ---------------------------------------------
+
                                 dados_anuncio = prepared.task.dados_anuncio
                                 nome_prod = dados_anuncio.get('nome_produto', 'produto')
                                 
@@ -475,41 +494,47 @@ def main() -> None:
                                 perfil_modelo = descricoes.get('modelo', {})
                                 desc_maos = perfil_modelo.get('maos', 'mãos femininas delicadas')
 
-                                prompt_pov_flow = (
-                                    f"Usando a imagem anexada como referência, gere uma nova foto ultra-realista vertical 9:16 para um anúncio. "
-                                    f"A cena deve estar em POV com duas mãos com a seguinte característica: ({desc_maos}). "
-                                    f"Mostre apenas as mãos interagindo naturalmente com o produto ({nome_prod}) no mundo real. "
-                                    f"O produto DEVE ser idêntico ao original, centralizado e sem deformações ou invenções no design. "
-                                    f"Estilo lifestyle premium com iluminação suave. Mantenha o fundo em desfoque (bokeh). "
-                                    f"NÃO adicione nenhum texto ou elemento gráfico."
-                                )
+                                # --- SELETOR DINÂMICO DE PROMPT POR CATEGORIA ---
+                                pasta_estilo = estilo_filmagem_pasta.lower()
+                                
+                                if "frontal" in pasta_estilo:
+                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_FRONTAL.format(nome_produto=nome_prod)
+                                elif "caminhando" in pasta_estilo:
+                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_CAMINHANDO.format(nome_produto=nome_prod)
+                                elif "pes" in pasta_estilo:
+                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_PES.format(nome_produto=nome_prod)
+                                elif "flat" in pasta_estilo:
+                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_FLAT.format(nome_produto=nome_prod)
+                                else:
+                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_POV.format(
+                                        nome_produto=nome_prod,
+                                        desc_maos=desc_maos
+                                    )
                                 
                                 try:
-                                    # ==========================================================
-                                    # MODO TESTE A/B: GERAÇÃO DUPLA DE POV (FLOW -> GEMINI)
-                                    # ==========================================================
                                     pasta_tarefa = Path(prepared.task.folder_path)
-                                    cand_a = pasta_tarefa / f"POV_Cand_A_{sufixo_rot}.png"
-                                    cand_b = pasta_tarefa / f"POV_Cand_B_{sufixo_rot}.png"
+                                    cand_a = pasta_tarefa / f"ImgCand_A_{sufixo_rot}.png"
+                                    cand_b = pasta_tarefa / f"ImgCand_B_{sufixo_rot}.png"
                                     
-                                    # Limpeza de segurança caso o script tenha parado no meio
                                     if cand_a.exists(): cand_a.unlink()
                                     if cand_b.exists(): cand_b.unlink()
                                     
-                                    # 1. Gera Variante A
-                                    log_step(f"Gerando POV Variante A ({sufixo_rot}) no Flow...")
-                                    flow_bot_img.gerar_imagem_pov(
+                                    # 1. Gera Variante A (Passando o caminho_modelo)
+                                    log_step(f"Gerando Imagem Base Variante A ({sufixo_rot}) no Flow...")
+                                    flow_bot_img.gerar_imagem_base(
                                         caminho_referencia=primeira_imagem,
-                                        prompt=prompt_pov_flow,
-                                        caminho_saida=cand_a  # <--- SEM O .name
+                                        prompt=prompt_img_base_flow,
+                                        caminho_saida=cand_a,
+                                        caminho_modelo=cam_modelo_param 
                                     )
                                     
-                                    # 2. Gera Variante B
-                                    log_step(f"Gerando POV Variante B ({sufixo_rot}) no Flow...")
-                                    flow_bot_img.gerar_imagem_pov(
+                                    # 2. Gera Variante B (Passando o caminho_modelo)
+                                    log_step(f"Gerando Imagem Base Variante B ({sufixo_rot}) no Flow...")
+                                    flow_bot_img.gerar_imagem_base(
                                         caminho_referencia=primeira_imagem,
-                                        prompt=prompt_pov_flow + " Ultra realistic details, subtle dynamic lighting shift.",
-                                        caminho_saida=cand_b  # <--- SEM O .name
+                                        prompt=prompt_img_base_flow + " Ultra realistic details, subtle dynamic lighting shift.",
+                                        caminho_saida=cand_b,
+                                        caminho_modelo=cam_modelo_param
                                     )
                                     
                                     # 3. Avaliação no Gemini
@@ -517,45 +542,44 @@ def main() -> None:
                                     gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
                                     gemini_juri.abrir_gemini()
                                     
-                                    melhor_pov = gemini_juri.avaliar_melhor_imagem_pov(cand_a, cand_b, nome_prod)
+                                    melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(cand_a, cand_b, nome_prod, estilo_filmagem_pasta)
                                     
-                                    # 4. Salva a vencedora como o arquivo oficial do Roteiro (POV_VALIDADO_RoteiroX.png)
-                                    shutil.copy2(str(melhor_pov), str(caminho_pov_roteiro))
-                                    log_success(f'POV gerado e validado via FLOW para {sufixo_rot}: {caminho_pov_roteiro.name}')
+                                    shutil.copy2(str(melhor_img_base), str(caminho_img_base_roteiro))
+                                    log_success(f'Imagem Base gerada e validada via FLOW para {sufixo_rot}: {caminho_img_base_roteiro.name}')
                                     
-                                    # 5. Limpa as candidatas para não poluir o Google Drive
                                     cand_a.unlink(missing_ok=True)
                                     cand_b.unlink(missing_ok=True)
                                     
-                                    imagem_base_flow = caminho_pov_roteiro
-                                    # ==========================================================
+                                    imagem_base_flow = caminho_img_base_roteiro
                                     
                                 except Exception as e:
                                     log_error(f"Erro no fluxo A/B de imagem FLOW/GEMINI: {e}")
-                                    raise Exception(f'Falha fatal ao gerar POV para {sufixo_rot} via FLOW')
+                                    raise Exception(f'Falha fatal ao gerar Imagem Base para {sufixo_rot} via FLOW')
                             else:
-                                log_step(f'ETAPA IA: Gerando e curando imagem POV para {sufixo_rot} via GEMINI...')
-                                novo_pov = gemini.executar_fluxo_imagem_pov(
+                                log_step(f'ETAPA IA: Gerando e curando Imagem Base para {sufixo_rot} via GEMINI...')
+                                nova_img_base = gemini.executar_fluxo_imagem_base(
                                     tarefa=prepared.task,
                                     foto_produto_escolhida=primeira_imagem,
                                     max_versoes=3,
                                     numero_roteiro=r_idx
                                 )
-                                if novo_pov:
-                                    log_success(f'POV validado pelo Júri para {sufixo_rot}: {novo_pov.name}')
-                                    imagem_base_flow = novo_pov
+                                if nova_img_base:
+                                    log_success(f'Imagem Base validada pelo Júri para {sufixo_rot}: {nova_img_base.name}')
+                                    imagem_base_flow = nova_img_base
                                 else:
-                                    raise Exception(f'Falha fatal ao gerar POV para {sufixo_rot}')
+                                    raise Exception(f'Falha fatal ao gerar Imagem Base para {sufixo_rot}')
 
                         # --- CHECKPOINT: IA ROTEIRO E VALIDAÇÃO DE TAMANHO ---
                         precisa_gerar_roteiro = True
                         if caminho_txt_cenas.exists():
                             conteudo_teste = caminho_txt_cenas.read_text(encoding='utf-8').strip()
-                            if len(conteudo_teste) < 500:
-                                log_error(f'⚠️ Arquivo {caminho_txt_cenas.name} pequeno/corrompido ({len(conteudo_teste)} chars). Apagando para regerar...')
+                            
+                            # VALIDAÇÃO DUPLA: Tamanho mínimo E existência obrigatória da tag da cena
+                            if len(conteudo_teste) < 500 or not re.search(r'\[[Cc]ena\s*1', conteudo_teste):
+                                log_error(f'⚠️ Arquivo {caminho_txt_cenas.name} pequeno ou sem cenas válidas. Apagando para regerar...')
                                 caminho_txt_cenas.unlink(missing_ok=True)
                             else:
-                                log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: {caminho_txt_cenas.name} já existe e possui tamanho válido ({len(conteudo_teste)} chars).')
+                                log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: {caminho_txt_cenas.name} já existe e possui tamanho válido.')
                                 precisa_gerar_roteiro = False
 
                         if precisa_gerar_roteiro:
@@ -612,8 +636,9 @@ def main() -> None:
                         
                         cenas = ler_e_separar_cenas(caminho_txt_cenas, qtd_cenas=qtd_cenas_anuncio)
                         if not cenas:
-                            log_error(f"O arquivo {caminho_txt_cenas.name} não retornou cenas válidas!")
-                            raise Exception("Lista de cenas vazia.")
+                            log_error(f"O arquivo {caminho_txt_cenas.name} não retornou cenas válidas! Deletando lixo do Gemini...")
+                            caminho_txt_cenas.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
+                            raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
                             
                         url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
                         variantes_720p_geradas = []
