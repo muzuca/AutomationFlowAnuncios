@@ -609,23 +609,13 @@ class GoogleFlowAutomation:
                 
             time.sleep(3)
             
-            _log(f"Aguardando o botão 'Baixar' habilitar (máx {timeout_geracao}s)...")
-            xpath_btn_baixar = "//button[.//i[text()='download'] and .//div[text()='Baixar']]"
-            fim_espera = time.time() + timeout_geracao
-            
-            while time.time() < fim_espera:
-                b_baixar = self.driver.find_elements(By.XPATH, xpath_btn_baixar)
-                if b_baixar and b_baixar[0].is_displayed() and b_baixar[0].get_attribute("disabled") is None:
-                    print() 
-                    _log("✔ Botão 'Baixar' habilitado! Geração de imagem concluída.")
-                    return True
-                
-                self._print_progress_inline(f"[FLOW-IA] Gerando Imagem... {int(time.time() - (fim_espera - timeout_geracao))}s")
-                time.sleep(4)
-                
-            self._finish_progress_inline()
-            _log("❌ Timeout aguardando o botão de baixar.")
-            return False
+            # Ajuste Cirúrgico: Usa o tracker inteligente em vez de procurar um botão "Baixar" solto na tela
+            _log(f"Aguardando a geração da imagem no card (máx {timeout_geracao}s)...")
+            if self._aguardar_geracao_tracking_inline(prompt_linear, timeout_geracao):
+                return True
+            else:
+                _log("❌ Timeout aguardando geração da imagem no card.")
+                return False
             
         except Exception as e:
             _log(f"Erro ao enviar prompt de imagem: {e}")
@@ -1278,11 +1268,34 @@ class GoogleFlowAutomation:
         _log(f'Iniciando download da imagem para: {caminho_destino.name}')
         download_dir = Path.home() / "Downloads"
         try:
+            # Ajuste Cirúrgico: Abre o card recém-gerado ANTES de tentar clicar em Baixar
+            _log("Abrindo a imagem recém gerada em destaque...")
+            card = None
+            if self.ultimo_tile_id_gerado: 
+                card = self._encontrar_card_por_tile_id(self.ultimo_tile_id_gerado)
+            if not card: 
+                card = self._card_mais_recente()
+            
+            if card:
+                try:
+                    img = card.find_element(By.XPATH, ".//img[not(contains(@class, 'avatar'))]")
+                    self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", img)
+                    time.sleep(0.5)
+                    js_click(self.driver, img)
+                    time.sleep(2.0)
+                    _log("✔ Card da imagem gerada aberto.")
+                except Exception as e:
+                    _log("Aviso: Não foi possível clicar no card da imagem, tentando baixar direto.")
+
             _log("Procurando botão 'Baixar'...")
             xpath_baixar = "//button[.//i[text()='download'] and .//div[contains(.,'Baixar')]]"
             try:
-                btn_baixar = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_baixar)))
-                btn_baixar.click()
+                # Modificado para pegar o último botão (que pertence ao modal aberto)
+                botoes_baixar = self.driver.find_elements(By.XPATH, xpath_baixar)
+                if botoes_baixar:
+                    js_click(self.driver, botoes_baixar[-1])
+                else:
+                    raise TimeoutException()
             except TimeoutException:
                 btn_baixar = self.driver.find_elements(By.XPATH, "//button[@aria-label='Download image'] | //button[contains(@aria-label, 'Download')] | //button[.//i[text()='download']]")
                 if btn_baixar: js_click(self.driver,btn_baixar[-1])

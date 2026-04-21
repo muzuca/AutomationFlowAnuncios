@@ -147,9 +147,22 @@ class GeminiAnunciosViaFlow:
                     if btn.is_displayed() and btn.is_enabled():
                         texto_btn = (btn.text or btn.get_attribute('aria-label') or '').strip().replace('\n', ' ')
                         _log(f"🎯 Trator encontrou: '{texto_btn[:30]}'. Clicando...")
-                        js_click(self.driver,btn)
+                        
+                        # Rolagem para o botão para garantir visibilidade
+                        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                        time.sleep(0.5)
+                        
+                        # NOVO: Hierarquia de cliques para SPAs (React/Angular)
+                        try:
+                            btn.click() # Tentativa de clique FÍSICO nativo
+                        except Exception:
+                            try:
+                                ActionChains(self.driver).move_to_element(btn).click().perform() # Simulação de rato
+                            except Exception:
+                                js_click(self.driver, btn) # Seu fallback original de injeção JS
+                                
                         clicou_algo = True
-                        time.sleep(2.0) # Espera a animação do modal
+                        time.sleep(3.0) # Aumentado de 2.0 para 3.0: Espera a animação pesada do modal ou navegação de SPA
                         break 
                 except Exception:
                     continue
