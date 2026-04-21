@@ -382,6 +382,7 @@ class GoogleFlowAutomation:
         """Faz o upload e CONTA os cards originais na tela para evitar falsos positivos de re-upload."""
         _log(f"Iniciando upload isolado de: {caminho.name}...")
         nome_arquivo = caminho.name
+        nome_limpo = caminho.stem # Usado apenas para dar nome aos prints sem a extensão
         
         try:
             # 1. Conta quantos cards ORIGINAIS (sem botão de download) COM ESTE NOME já existem
@@ -389,12 +390,19 @@ class GoogleFlowAutomation:
             elementos_antes = self.driver.find_elements(By.XPATH, xpath_sucesso)
             qtd_antes = len([el for el in elementos_antes if el.is_displayed()])
             
+            # 📸 PRINT 1: Visão da galeria ANTES de enviar o arquivo
+            salvar_print_debug(self.driver, f"1_ANTES_DO_UPLOAD_{nome_limpo}")
+            
             # 2. Injeta o arquivo no input correto
             input_file = self._encontrar_input_file()
             self.driver.execute_script("arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;", input_file)
             input_file.send_keys(str(caminho.resolve()))
             
             _log(f"Arquivo injetado. Monitorando a criação do NOVO card (Atuais: {qtd_antes})...")
+            
+            # 📸 PRINT 2: Visão logo após o script injetar o arquivo no HTML
+            salvar_print_debug(self.driver, f"2_ARQUIVO_INJETADO_{nome_limpo}")
+            
             time.sleep(3.0) 
             
             inicio_upload = time.time()
@@ -409,6 +417,9 @@ class GoogleFlowAutomation:
                 if erros and any(e.is_displayed() for e in erros):
                     self._finish_progress_inline()
                     _log("❌ Falha crítica: O Google Flow rejeitou a imagem (Erro no servidor/Falha).")
+                    
+                    # 📸 PRINT 3 (Erro): Caso o Flow mostre a mensagem de falha no card
+                    salvar_print_debug(self.driver, f"3_ERRO_SERVIDOR_UPLOAD_{nome_limpo}")
                     return False
 
                 # 3. Verifica se a quantidade de imagens ORIGINAIS aumentou (Ignora as geradas pela Variante A)
@@ -418,6 +429,9 @@ class GoogleFlowAutomation:
                 if qtd_agora > qtd_antes:
                     self._finish_progress_inline()
                     _log(f"✔ Upload concluído! O NOVO card com '{nome_arquivo}' apareceu na interface.")
+                    
+                    # 📸 PRINT 3 (Sucesso): Momento em que o script detecta que o upload terminou
+                    salvar_print_debug(self.driver, f"3_UPLOAD_CONCLUIDO_{nome_limpo}")
                     sucesso_upload = True
                     break
                 
@@ -430,6 +444,9 @@ class GoogleFlowAutomation:
             if not sucesso_upload:
                 self._finish_progress_inline()
                 _log(f"⚠️ Timeout: O NOVO card com o nome '{nome_arquivo}' não apareceu após 120s.")
+                
+                # 📸 PRINT 3 (Timeout): A tela após 120 segundos travada
+                salvar_print_debug(self.driver, f"3_TIMEOUT_UPLOAD_{nome_limpo}")
                 return False
 
             time.sleep(2.0) 
@@ -438,8 +455,10 @@ class GoogleFlowAutomation:
         except Exception as e:
             self._finish_progress_inline()
             _log(f"🚨 Erro crítico na injeção de upload isolado: {str(e)[:100]}")
+            # 📸 PRINT (Crash)
+            salvar_print_debug(self.driver, f"ERRO_CRITICO_UPLOAD_{nome_limpo}")
             return False
-
+        
     def _clicar_produto_destaque(self, nome_arquivo: str) -> bool:
         """Busca o card do produto especificamente pelo NOME e clica nele (XPATH Restaurado com blindagem)."""
         _log(f"Clicando na imagem {nome_arquivo} para abrir em destaque...")
