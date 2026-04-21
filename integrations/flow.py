@@ -1062,11 +1062,14 @@ class GoogleFlowAutomation:
             except Exception: pass
 
             try:
-                sucesso = self.driver.find_elements(By.XPATH, f"{base_xpath}//video | {base_xpath}//img[contains(@alt, 'Gerado') or contains(@alt, 'Generated')] | {base_xpath}//i[contains(text(), 'play_circle')]")
+                # CORREÇÃO CIRÚRGICA: Adicionado //button[.//i[text()='download']] como critério de sucesso garantido.
+                sucesso = self.driver.find_elements(By.XPATH, f"{base_xpath}//button[.//i[text()='download']] | {base_xpath}//video | {base_xpath}//img[contains(@alt, 'Gerado') or contains(@alt, 'Generated')] | {base_xpath}//i[contains(text(), 'play_circle')]")
                 if sucesso:
-                    if linha_progresso_ativa: self._finish_progress_inline("[FLOW-IA] Gerando... 100% | pronto!")
-                    else: _log("✔ Artefato pronto e disponível para download.")
-                    return True
+                    # Garante que pelo menos um dos elementos de sucesso está visível (evita falsos positivos em botões ocultos)
+                    if any(el.is_displayed() for el in sucesso):
+                        if linha_progresso_ativa: self._finish_progress_inline("[FLOW-IA] Gerando... 100% | pronto!")
+                        else: _log("✔ Artefato pronto e disponível para download.")
+                        return True
             except Exception: pass
 
             pct_atual = None
@@ -1105,13 +1108,15 @@ class GoogleFlowAutomation:
                             self._print_progress_inline(msg)
                             ultimo_status_inline = msg
                             linha_progresso_ativa = True
-                        salvar_print_debug(self.driver,"GERANDO_ARTEFATO")    
+                        
+                        # Removido o salvar_print_debug("GERANDO_ARTEFATO") daqui para não ocultar a interface.
                 except Exception: pass
 
             if not viu_sinal_de_vida:
-                if time.time() - ultimo_movimento > 60:
+                # Aumentado para 90s, pois algumas imagens demoram mais de 1 minuto sem dar qualquer feedback (sinal de vida).
+                if time.time() - ultimo_movimento > 90:
                     if linha_progresso_ativa: self._finish_progress_inline()
-                    _log("❌ Card sem sinal de vida por 60s. Assumindo erro.")
+                    _log("❌ Card sem sinal de vida por 90s. Assumindo erro.")
                     return False
             else:
                 if time.time() - ultimo_movimento > 180:
@@ -1123,7 +1128,7 @@ class GoogleFlowAutomation:
         if linha_progresso_ativa: self._finish_progress_inline()
         _log("Timeout esgotado na geração do artefato.")
         return False
-
+    
     def resolver_permissoes_drive(self) -> None:
         try:
             continue_btn = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Continue')]")
