@@ -11,7 +11,7 @@ import shutil
 import pyperclip
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim
+from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, salvar_ultimo_prompt
 
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
@@ -589,10 +589,7 @@ class GoogleFlowAutomation:
         _log("Enviando prompt (Fluxo isolado de Imagem)...")
         prompt_linear = " ".join(prompt.split())
         
-        try:
-            with open("DEBUG_ULTIMO_PROMPT.txt", "w", encoding="utf-8") as f:
-                f.write(f"--- PROMPT ENVIADO AO FLOW (IMAGEM) ---\n{prompt_linear}")
-        except: pass
+        salvar_ultimo_prompt(f"--- PROMPT ENVIADO AO FLOW (IMAGEM) ---\n{prompt_linear}")
 
         try:
             xpath_box = "//div[@role='textbox' and @contenteditable='true'] | //textarea"
@@ -854,10 +851,7 @@ class GoogleFlowAutomation:
     def enviar_prompt_e_aguardar(self, prompt: str, timeout_geracao: int = 420, modo_imagem: bool = False) -> bool:
         prompt_linear = " ".join(prompt.split())
         
-        try:
-            with open("DEBUG_ULTIMO_PROMPT.txt", "w", encoding="utf-8") as f:
-                f.write(f"--- PROMPT ENVIADO AO FLOW ---\n{prompt_linear}")
-        except: pass
+        salvar_ultimo_prompt(f"--- PROMPT ENVIADO AO FLOW ---\n{prompt_linear}")
                                   
         for tentativa_local in range(1, 4):
             _log(f"[FLOW-IA] Iniciando tentativa local de prompt {tentativa_local}/3...")

@@ -130,3 +130,12 @@ def limpar_diretorio_visao() -> None:
             pasta_visao.mkdir(parents=True, exist_ok=True)
     except Exception as e:
         _log(f"Aviso: Falha ao limpar pasta logs/visao: {e}", "SISTEMA")
+
+def salvar_ultimo_prompt(texto: str) -> None:
+    """Salva o último prompt enviado para a IA num ficheiro txt centralizado nos logs."""
+    try:
+        arquivo_prompt = _get_logs_dir() / "ultimo_prompt.txt"
+        with open(arquivo_prompt, "w", encoding="utf-8") as f:
+            f.write(texto)
+    except Exception as e:
+        _log(f"Aviso: Não foi possível guardar o log do prompt: {e}", "SISTEMA")

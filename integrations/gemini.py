@@ -13,7 +13,7 @@ import pyperclip
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, _get_logs_dir, limpar_diretorio_visao
+from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, _get_logs_dir, salvar_ultimo_prompt, limpar_diretorio_visao
 
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -748,12 +748,7 @@ class GeminiAnunciosViaFlow:
             # e escreve o texto diretamente no input buffer.
             prompt_seguro = re.sub(r'[^\u0000-\uFFFF]', '', prompt)
 
-            # ==============================================================
-            # ADICIONE ISTO AQUI: Salva o que vai ser enviado num ficheiro!
-            # ==============================================================
-            with open("DEBUG_ULTIMO_PROMPT.txt", "w", encoding="utf-8") as f:
-                f.write(prompt_seguro)
-            # ==============================================================
+            salvar_ultimo_prompt(prompt_seguro)
                         
             try:
                 # Método blindado Selenium: Aciona a API nativa de eventos do Chrome
