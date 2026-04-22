@@ -13,7 +13,7 @@ import pyperclip
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim
+from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, _get_logs_dir, limpar_diretorio_visao
 
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -53,14 +53,8 @@ class GeminiAnunciosViaFlow:
         self.timeout = timeout
         
         # --- ZERANDO DIRETÓRIO DE LOGS A CADA CICLO ---
-        self.pasta_logs_visao = Path("logs_visao")
-        if self.pasta_logs_visao.exists():
-            for arquivo_png in self.pasta_logs_visao.glob("*.png"):
-                try:
-                    arquivo_png.unlink()
-                except Exception:
-                    pass
-        self.pasta_logs_visao.mkdir(exist_ok=True)
+        limpar_diretorio_visao()
+        self.pasta_logs_visao = _get_logs_dir() / "visao"
 
     def abrir_gemini(self) -> None:
         _log('Abrindo Gemini e validando estado da tela...')

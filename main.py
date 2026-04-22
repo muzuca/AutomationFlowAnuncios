@@ -25,6 +25,7 @@ from integrations.window_focus import dismiss_chrome_native_popup_with_retry
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
 from anuncios.prompts import PROMPT_DESCRICAO_DIRETA_FRONTAL, PROMPT_DESCRICAO_DIRETA_POV, PROMPT_DESCRICAO_DIRETA_CAMINHANDO, PROMPT_DESCRICAO_DIRETA_PES, PROMPT_DESCRICAO_DIRETA_FLAT
+from integrations.utils import limpar_diretorio_visao
 
 
 def setup_logging() -> None:
@@ -54,24 +55,6 @@ def log_success(message: str) -> None:
 
 def log_error(message: str) -> None:
     logging.error(f'ERRO: {message}')
-
-
-def limpar_diretorio_logs_visao() -> None:
-    """Zera o diretório de prints de monitoramento para não acumular lixo entre ciclos."""
-    try:
-        pasta_logs = Path("logs_visao")
-        if pasta_logs.exists():
-            log_step('Limpando imagens antigas de monitoramento (logs_visao)...')
-            for arquivo in pasta_logs.glob("*.png"):
-                try:
-                    arquivo.unlink()
-                except Exception:
-                    pass
-        else:
-            pasta_logs.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        log_error(f"Aviso: Falha ao limpar pasta logs_visao: {e}")
-
 
 def fechar_popup_cromado_pos_gemini(driver) -> None:
     log_step('ETAPA 7.1: validando popup nativo do Chrome apos abrir o Gemini')
@@ -150,7 +133,7 @@ def main() -> None:
         executar_sincronizacao()
         log_success('Credenciais prontas')
         
-        limpar_diretorio_logs_visao()
+        limpar_diretorio_visao()
 
         em_espera = False
 
@@ -195,7 +178,7 @@ def main() -> None:
             em_espera = False
             
             # A cada nova tarefa encontrada, zera a pasta de logs para manter o foco na tarefa atual
-            #limpar_diretorio_logs_visao()
+            #limpar_diretorio_visao()
             
             log_step("=====================================================================")
             log_success(f'NOVA TAREFA ENCONTRADA: {task.folder_path}')

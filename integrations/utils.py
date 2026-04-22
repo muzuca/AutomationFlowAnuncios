@@ -26,7 +26,8 @@ def _log(msg: str, prefixo: str = "SISTEMA") -> None:
     
     # Salva opcionalmente num arquivo de log do dia para conferência
     try:
-        log_file = Path("logs_execucao.txt")
+        log_file = Path("logs") / "execucao.txt"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(texto + "\n")
     except: pass
@@ -37,8 +38,9 @@ def salvar_print_debug(driver, nome_fase: str):
     if os.getenv("DISABLE_SCREENSHOTS", "False").lower() == "true":
         return
     try:
-        pasta_logs = Path("logs_visao")
-        pasta_logs.mkdir(exist_ok=True)
+        # Agora usamos a função auxiliar e criamos a subpasta 'visao'
+        pasta_visao = _get_logs_dir() / "visao"
+        pasta_visao.mkdir(parents=True, exist_ok=True)
         
         # Injeta a tarja vermelha
         driver.execute_script("""
@@ -51,7 +53,7 @@ def salvar_print_debug(driver, nome_fase: str):
         time.sleep(0.3) 
         
         timestamp = time.strftime('%H%M%S')
-        driver.save_screenshot(str(pasta_logs / f"{timestamp}_{nome_fase}.png"))
+        driver.save_screenshot(str(pasta_visao / f"{timestamp}_{nome_fase}.png"))
         
         # Limpa a tarja
         driver.execute_script("const el = document.getElementById('debug-url-overlay'); if(el) el.remove();")
@@ -105,3 +107,26 @@ def forcar_fechamento_janela_windows():
                 time.sleep(0.5)
     except Exception as e:
         _log(f"Erro ao tentar matar janela nativa: {e}", "SISTEMA")
+
+def _get_logs_dir() -> Path:
+    """Garante e retorna o caminho absoluto para a pasta 'logs' na raiz do projeto."""
+    raiz_projeto = Path(__file__).parent.parent  # Sobe de /integrations para a raiz
+    logs_dir = raiz_projeto / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return logs_dir
+
+def limpar_diretorio_visao() -> None:
+    """Zera o diretório de prints de monitoramento (logs/visao) para não acumular lixo."""
+    try:
+        pasta_visao = _get_logs_dir() / "visao"
+        if pasta_visao.exists():
+            _log(f"Limpando imagens antigas de monitoramento em {pasta_visao.name}...", "SISTEMA")
+            for arquivo in pasta_visao.glob("*.png"):
+                try:
+                    arquivo.unlink()
+                except Exception:
+                    pass
+        else:
+            pasta_visao.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        _log(f"Aviso: Falha ao limpar pasta logs/visao: {e}", "SISTEMA")
