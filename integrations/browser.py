@@ -83,8 +83,8 @@ def create_driver(settings):
         # Otimizações de memória para rodar em background sem travar
         options.add_argument('--disable-gpu')
         
-        # Mascara o User-Agent e flags de segurança apenas no headless para tentar driblar o login
-        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36')
+        # Mascara o User-Agent atualizado para evitar o "Something went wrong (13)"
+        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
         options.add_argument("--disable-web-security")
         options.add_argument("--allow-running-insecure-content")
 
@@ -92,6 +92,11 @@ def create_driver(settings):
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     
+    # --- BLINDAGEM ADICIONAL CONTRA ERRO 13 E RASTREAMENTO ---
+    # Abre sempre em modo incógnito e desativa o cache de disco para evitar 'contaminação' entre contas
+    options.add_argument('--incognito')
+    options.add_argument('--disable-application-cache')
+    options.add_argument('--disk-cache-size=0')
     # ==========================================================
 
     # Inicializa o serviço silencioso (Mata a mensagem ws://127.0.0.1)
