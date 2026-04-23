@@ -849,6 +849,7 @@ class GoogleFlowAutomation:
             return ""
 
     def enviar_prompt_e_aguardar(self, prompt: str, timeout_geracao: int = 420, modo_imagem: bool = False) -> bool:
+        import os
         prompt_linear = " ".join(prompt.split())
         
         salvar_ultimo_prompt(f"--- PROMPT ENVIADO AO FLOW ---\n{prompt_linear}")
@@ -856,92 +857,96 @@ class GoogleFlowAutomation:
         for tentativa_local in range(1, 4):
             _log(f"[FLOW-IA] Iniciando tentativa local de prompt {tentativa_local}/3...")
             self._fechar_modais_intrusivos()
-            salvar_print_debug(self.driver,f"TENTATIVA_PROMPT_{tentativa_local}_INICIO")
+            salvar_print_debug(self.driver, f"TENTATIVA_PROMPT_{tentativa_local}_INICIO")
 
             try:
                 if not modo_imagem:
-                    _log("Validando se a imagem de referência continua no slot Inicial...")
-                    
+                    # (Sua lógica de validação de slot inicial permanece igual)
                     btn_remover = self.driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Remove')] | //div[@role='button' and contains(@aria-label, 'Remove')]")
                     btn_img = self.driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Initial image') and .//img] | //div[contains(@aria-label, 'Initial') and .//img]")
                     
                     if not btn_remover and not btn_img:
-                        _log("⚠️ O Flow removeu a imagem do slot! Revinculando antes de enviar...")
+                        _log("⚠️ O Flow removeu a imagem do slot! Revinculando...")
                         try:
-                            xpath_btn_inicial = (
-                                "//div[@type='button' and (contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'inicial') "
-                                "or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'initial'))]"
-                            )
+                            xpath_btn_inicial = "//div[@type='button' and (contains(translate(., 'ABC', 'abc'), 'inicial') or contains(translate(., 'ABC', 'abc'), 'initial'))]"
                             botoes_iniciais = self.driver.find_elements(By.XPATH, xpath_btn_inicial)
                             if botoes_iniciais and botoes_iniciais[0].is_displayed():
                                 js_click(self.driver, botoes_iniciais[0])
                                 time.sleep(2.0)
-                                
                                 imgs_dialog = self.driver.find_elements(By.XPATH, "//div[@role='dialog']//img")
                                 if imgs_dialog:
                                     js_click(self.driver, imgs_dialog[0])
                                     time.sleep(0.5)
-                                    
                                 ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
                                 time.sleep(0.5)
-                                _log("✔ Imagem revinculada com sucesso no slot Inicial!")
-                            else:
-                                _log("⚠️ Botão Inicial vazio não encontrado na tela.")
                         except Exception as e:
-                            _log(f"🚨 Erro ao tentar revincular imagem: {e}")
+                            _log(f"🚨 Erro ao revincular: {e}")
                     else:
-                        _log("✔ Imagem de referência confirmada no slot Inicial.")
+                        _log("✔ Imagem de referência confirmada.")
 
-                _log("Buscando caixa de texto ativa...")
+                # --- BUSCA DA CAIXA DE TEXTO ---
                 xpath_box = "//div[@role='dialog']//div[@role='textbox'] | //div[@role='dialog']//textarea | //div[@role='textbox' and @contenteditable='true'] | //textarea"
                 caixas = self.driver.find_elements(By.XPATH, xpath_box)
                 box = next((c for c in caixas if c.is_displayed()), None)
                 
                 if not box:
                     box = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_box)))
-                
+
+                # --- AJUSTE VITAL PARA HEADLESS E MÁQUINA NOVA ---
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", box)
                 self.driver.execute_script("arguments[0].focus();", box)
-                js_click(self.driver,box)
+                js_click(self.driver, box) # Acorda o elemento
                 time.sleep(0.5)
 
+                # Limpeza agressiva
                 box.send_keys(Keys.CONTROL, "a")
                 box.send_keys(Keys.BACKSPACE)
                 time.sleep(0.5)
 
-                _log(f"Digitando prompt ({len(prompt_linear)} chars)...")
-                box.send_keys(prompt_linear)
-                time.sleep(1.5) 
+                # Detecção de modo para escolher o método de escrita
+                is_headless = os.getenv('CHROME_HEADLESS', 'False').lower() == 'true'
+                
+                if is_headless:
+                    _log(f"Modo Headless: Injetando prompt via SendKeys + DispatchEvent...")
+                    box.send_keys(prompt_linear)
+                    # Força o JavaScript do Flow (React/Angular) a validar o input
+                    self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", box)
+                else:
+                    _log(f"Modo Visível: Colando prompt via Clipboard...")
+                    import pyperclip
+                    pyperclip.copy(prompt_linear)
+                    box.send_keys(Keys.CONTROL, 'v')
 
-                depois = self._ler_texto_prompt_box(box)
-                if len(depois) < 10:
-                    _log("⚠️ Falha na digitação. Tentando ActionChains...")
-                    ActionChains(self.driver).move_to_element(box).click().send_keys(prompt_linear).perform()
-                    time.sleep(1.0)
+                time.sleep(2.0) # Tempo vital para o Flow "aceitar" o texto e habilitar o botão
 
+                # --- SUBMISSÃO ---
                 _log('Buscando botão de submissão (Seta/Send)...')
+                xpath_submit = "//div[@role='dialog']//button[.//i[text()='arrow_upward' or text()='send' or text()='arrow_forward']] | //button[.//i[text()='arrow_upward' or text()='send' or text()='arrow_forward']] | //button[@aria-label='Gerar']"
+                
                 try:
-                    xpath_submit = "//div[@role='dialog']//button[.//i[text()='arrow_upward' or text()='send']] | //button[.//i[text()='arrow_upward' or text()='send']] | //button[@aria-label='Gerar']"
                     btn_submit = self.driver.find_element(By.XPATH, xpath_submit)
-                    js_click(self.driver,btn_submit)
-                    _log("✔ Botão de submissão clicado.")
-                except Exception:
-                    _log("Botão não achado, tentando ENTER como fallback...")
+                    if btn_submit.is_displayed():
+                        js_click(self.driver, btn_submit)
+                        _log("✔ Botão de submissão clicado via JS.")
+                    else:
+                        raise Exception("Botão oculto")
+                except:
+                    _log("Botão não clicável, forçando ENTER...")
                     box.send_keys(Keys.ENTER)
                 
                 time.sleep(3)
                 
+                # --- AGUARDAR GERAÇÃO ---
                 if modo_imagem:
                     _log(f"Aguardando o botão 'Baixar' habilitar (máx {timeout_geracao}s)...")
-                    xpath_btn_baixar = "//button[.//i[text()='download'] and .//div[text()='Baixar']]"
+                    xpath_btn_baixar = "//button[.//i[text()='download'] and (.//div[text()='Baixar'] or .//span[text()='Baixar'])]"
                     fim_espera = time.time() + timeout_geracao
                     
                     while time.time() < fim_espera:
                         btns = self.driver.find_elements(By.XPATH, xpath_btn_baixar)
                         if btns:
                             btn = btns[0]
-                            is_disabled = btn.get_attribute("disabled")
-                            if btn.is_displayed() and is_disabled is None:
+                            if btn.is_displayed() and btn.get_attribute("disabled") is None:
                                 print() 
                                 _log("✔ Botão 'Baixar' habilitado! Geração concluída.")
                                 return True
@@ -950,13 +955,13 @@ class GoogleFlowAutomation:
                         time.sleep(4)
                     
                     self._finish_progress_inline()
-                    _log("❌ Timeout: O botão de baixar não habilitou a tempo.")
+                    _log("❌ Timeout: O botão de baixar não habilitou.")
                 else:
                     if self._aguardar_geracao_tracking_inline(prompt_linear, timeout_geracao):
                         return True
                 
             except Exception as e:
-                _log(f'Erro na tentativa de prompt {tentativa_local}: {str(e)[:100]}')
+                _log(f'Erro na tentativa {tentativa_local}: {str(e)[:100]}')
                 ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
                 time.sleep(2)
                 
