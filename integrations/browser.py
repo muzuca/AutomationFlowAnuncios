@@ -1,8 +1,10 @@
 # arquivo: integrations/browser.py
-# descricao: cria e configura o navegador Chrome com preferências de download, timeouts e opções para reduzir ruído visual no terminal, além de aplicar ajustes de inicialização que deixam a sessão mais limpa para a automação.
+# descricao: cria e configura o navegador Chrome com preferências de download, timeouts e opções para reduzir ruído visual no terminal...
 from __future__ import annotations
 
 import os
+import zipfile
+import re
 from pathlib import Path
 from subprocess import CREATE_NO_WINDOW # Necessário para esconder a janela do driver
 
@@ -12,6 +14,72 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 from config import Settings
+from integrations.utils import _log, obter_proxy_aleatorio
+
+
+def criar_extensao_proxy(proxy_url: str, folder: str = "logs/proxy_ext") -> str | None:
+    """Cria uma extensão temporária para autenticar o proxy nativamente no Chrome."""
+    try:
+        # Extrai dados: http://user:pass@host:port
+        auth_proxy = re.findall(r'http://(.*):(.*)@(.*):(.*)', proxy_url)
+        if not auth_proxy:
+            return None
+        
+        user, password, host, port = auth_proxy[0]
+        
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+
+        manifest_json = """
+        {
+            "version": "1.0.0",
+            "manifest_version": 2,
+            "name": "Chrome Proxy",
+            "permissions": [
+                "proxy", "tabs", "unlimitedStorage", "storage", "<all_urls>",
+                "webRequest", "webRequestBlocking"
+            ],
+            "background": { "scripts": ["background.js"] },
+            "minimum_chrome_version":"22.0.0"
+        }
+        """
+
+        background_js = f"""
+        var config = {{
+                mode: "fixed_servers",
+                rules: {{
+                  singleProxy: {{
+                    scheme: "http",
+                    host: "{host}",
+                    port: parseInt({port})
+                  }},
+                  bypassList: ["localhost"]
+                }}
+              }};
+        chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
+        chrome.webRequest.onAuthRequired.addListener(
+                function(details) {{
+                    return {{
+                        authCredentials: {{
+                            username: "{user}",
+                            password: "{password}"
+                        }}
+                    }};
+                }},
+                {{urls: ["<all_urls>"]}},
+                ['blocking']
+        );
+        """
+        
+        plugin_file = os.path.join(folder, "proxy_auth_plugin.zip")
+        with zipfile.ZipFile(plugin_file, 'w') as zp:
+            zp.writestr("manifest.json", manifest_json)
+            zp.writestr("background.js", background_js)
+        
+        return os.path.abspath(plugin_file)
+    except Exception as e:
+        _log(f"🚨 Erro ao criar extensão de proxy: {e}")
+        return None
 
 
 def build_chrome_options(settings: Settings) -> Options:
@@ -36,6 +104,15 @@ def build_chrome_options(settings: Settings) -> Options:
     if settings.chrome_headless:
         options.add_argument('--headless=new')
 
+    # --- INJEÇÃO DE PROXY VIA EXTENSÃO (NATIVO) ---
+    if settings.use_proxy:
+        proxy_url = obter_proxy_aleatorio()
+        if proxy_url:
+            plugin_path = criar_extensao_proxy(proxy_url)
+            if plugin_path:
+                options.add_extension(plugin_path)
+                _log(f"🌐 Proxy configurado: {proxy_url.split('@')[-1]}")
+
     prefs = {
         'download.default_directory': downloads_dir,
         'download.prompt_for_download': False,
@@ -51,7 +128,7 @@ def build_chrome_options(settings: Settings) -> Options:
             'afc': True,
             'mailto': True,
             'ms-windows-store': True,
-            'intent': True, # Comum em deep links mobile/web
+            'intent': True,
             'about': True,
             'unknown': True
         }
@@ -61,59 +138,66 @@ def build_chrome_options(settings: Settings) -> Options:
     return options
 
 
-def create_driver(settings):
-    # Passamos a usar a função build_chrome_options que você já tinha criado
-    # Assim herdamos as preferências de download e otimizações gerais de lá.
+def create_driver(settings: Settings):
+    # Passamos a usar a função build_chrome_options
     options = build_chrome_options(settings)
     
     # ==========================================================
     # CONFIGURAÇÕES HEADLESS (MODO INVISÍVEL DINÂMICO)
     # ==========================================================
-    # Garantimos que ele respeita a configuração do .env, tratando possíveis formatos de string
     is_headless = str(settings.chrome_headless).lower() in ['true', '1', 'yes']
 
     if is_headless:
-        # O '=new' usa o novo motor do Chrome que é muito mais difícil de ser detectado como bot.
+        # O '=new' usa o novo motor do Chrome
         options.add_argument('--headless=new')
         
-        # CRÍTICO: No modo headless, o Chrome abre numa janela minúscula por padrão.
-        # Isso quebra cliques em botões (como os do Gemini e Flow). Force o tamanho Full HD:
+        # Force o tamanho Full HD:
         options.add_argument('--window-size=1920,1080')
         
-        # Otimizações de memória para rodar em background sem travar
+        # Otimizações de memória
         options.add_argument('--disable-gpu')
         
-        # Mascara o User-Agent atualizado para evitar o "Something went wrong (13)"
+        # Mascara o User-Agent
         options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
         options.add_argument("--disable-web-security")
         options.add_argument("--allow-running-insecure-content")
 
-    # Ambas configurações (headless ou não) precisam dessas opções de estabilidade em servidor/background
+    # Ambas configurações precisam dessas opções
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     
     # --- BLINDAGEM ADICIONAL CONTRA ERRO 13 E RASTREAMENTO ---
-    # Abre sempre em modo incógnito e desativa o cache de disco para evitar 'contaminação' entre contas
     options.add_argument('--incognito')
     options.add_argument('--disable-application-cache')
     options.add_argument('--disk-cache-size=0')
     # ==========================================================
 
-    # Inicializa o serviço silencioso (Mata a mensagem ws://127.0.0.1)
+    # Inicializa o serviço silencioso
     service = Service(ChromeDriverManager().install())
     service.creation_flags = CREATE_NO_WINDOW
     
-    # Inicializa o driver
+    # Inicializa o driver (PURO SELENIUM)
     driver = webdriver.Chrome(service=service, options=options)
     
-    # Comando mágico Anti-Detecção (Executa no navegador instanciado)
-    # Impede que o Google leia a variável "webdriver = true" e barre o login
+    # --- 🛡️ AJUSTE DE DOWNLOAD CDP (OBRIGATÓRIO PARA HEADLESS/FLOW) ---
+    downloads_path = str(Path("logs/downloads").resolve())
+    
+    if not os.path.exists(downloads_path):
+        os.makedirs(downloads_path)
+
+    driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+        'behavior': 'allow',
+        'downloadPath': downloads_path
+    })
+    # ------------------------------------------------------------------
+
+    # Comando mágico Anti-Detecção
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
     
-    # Define timeout curto para os comandos do selenium não congelarem a tela
-    driver.implicitly_wait(2)
+    # Define timeout curto
+    driver.implicitly_wait(settings.chrome_implicit_wait)
     
     return driver
 

@@ -118,7 +118,7 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
 
         # --- ETAPA 3: VALIDAÇÃO DE SUCESSO ---
         _log("Aguardando confirmação de redirecionamento pós-login...", "LOGIN")
-        WebDriverWait(driver, 60).until(
+        WebDriverWait(driver, 180).until(
             lambda d: 'myaccount.google.com' in d.current_url
             or 'accounts.google.com' not in d.current_url
             or 'gemini.google.com' in d.current_url
@@ -140,7 +140,7 @@ def open_gemini(driver: WebDriver, settings: Settings) -> None:
     try:
         _log("Abrindo Gemini App...", "LOGIN")
         driver.get(settings.gemini_url)
-        WebDriverWait(driver, 60).until(lambda d: 'gemini.google.com' in d.current_url)
+        WebDriverWait(driver, 180).until(lambda d: 'gemini.google.com' in d.current_url)
         
         time.sleep(4)
         salvar_print_debug(driver, "login_06_gemini_carregado")

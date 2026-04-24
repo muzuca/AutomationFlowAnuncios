@@ -25,7 +25,8 @@ from integrations.window_focus import dismiss_chrome_native_popup_with_retry
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
 from anuncios.prompts import PROMPT_DESCRICAO_DIRETA_FRONTAL, PROMPT_DESCRICAO_DIRETA_POV, PROMPT_DESCRICAO_DIRETA_CAMINHANDO, PROMPT_DESCRICAO_DIRETA_PES, PROMPT_DESCRICAO_DIRETA_FLAT
-from integrations.utils import limpar_diretorio_visao
+# 🚨 IMPORTAÇÕES DE UTILS PADRONIZADAS
+from integrations.utils import _log, limpar_diretorio_visao, limpar_residuos_proxy
 
 
 def setup_logging() -> None:
@@ -46,15 +47,15 @@ def setup_logging() -> None:
 
 
 def log_step(message: str) -> None:
-    logging.info(message)
+    _log(message)
 
 
 def log_success(message: str) -> None:
-    logging.info(f'OK: {message}')
+    _log(f'OK: {message}')
 
 
 def log_error(message: str) -> None:
-    logging.error(f'ERRO: {message}')
+    _log(f'ERRO: {message}')
 
 def fechar_popup_cromado_pos_gemini(driver) -> None:
     log_step('ETAPA 7.1: validando popup nativo do Chrome apos abrir o Gemini')
@@ -123,7 +124,6 @@ def extrair_e_salvar_legenda(texto_limpo: str, caminho_legenda: Path) -> None:
         caminho_legenda.write_text(texto_legenda, encoding='utf-8')
         log_success(f'Legenda extraída e salva isoladamente: {caminho_legenda.name}')
 
-
 def main() -> None:
     setup_logging()
 
@@ -134,6 +134,7 @@ def main() -> None:
         log_success('Credenciais prontas')
         
         limpar_diretorio_visao()
+        limpar_residuos_proxy()
 
         em_espera = False
 
@@ -252,13 +253,16 @@ def main() -> None:
                     login_google(driver, settings, account)
                     dismiss_chrome_native_popup_with_retry(driver)
                     
-                    open_gemini(driver, settings)
-                    fechar_popup_cromado_pos_gemini(driver)
-
+                    # --- CONFIGURAÇÃO DA IA ---
                     salvar_ultima_conta_env(account.email)
-
-                    url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
+                    url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app/pt')
                     gemini = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
+
+                    # ACIONAMENTO DO TANQUE: Aqui ele vai abrir, checar bloqueios e usar o trator
+                    gemini.abrir_gemini() 
+                    
+                    # Validação de popups nativos logo após o trator agir
+                    fechar_popup_cromado_pos_gemini(driver)
 
                     # =====================================================================
                     # ETAPA IA-0: CLASSIFICAÇÃO INTELIGENTE E OCR (EXTRAÇÃO DE DADOS)
@@ -380,15 +384,21 @@ def main() -> None:
                         precisa_abrir_gemini = True
 
                     # --- BLOCO COM TRAVA DE CHECKPOINT ---
-                    # --- BLOCO COM TRAVA DE CHECKPOINT ---
                     if precisa_abrir_gemini:
                         open_gemini(driver, settings)
                         fechar_popup_cromado_pos_gemini(driver)
 
-                        # Validação única da foto original do produto
-                        log_step('ETAPA IA: Validando candidato a produto original...')
-                        if not gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=60):
-                            
+                        # --- NOVA LÓGICA DE VALIDAÇÃO DE PRODUTO COM O BYPASS DO .ENV ---
+                        pular_validacao = os.getenv('IGNORAR_VALIDACAO_PRODUTO', 'False').lower() == 'true'
+                        
+                        if pular_validacao:
+                            log_success("⏭️ Validação visual do produto pelo Gemini ignorada (Flag .env ativa). Aprovando direto.")
+                            produto_valido = True
+                        else:
+                            log_step('ETAPA IA: Validando candidato a produto original...')
+                            produto_valido = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=180)
+
+                        if not produto_valido:
                             # --- TRATAMENTO DE EXCEÇÃO (DESCARTE RÁPIDO) ---
                             log_error(f'A imagem foi reprovada pela IA (ou erro de leitura): {primeira_imagem.name}')
                             log_step("🛑 Tarefa abortada por rejeição de imagem. Movendo para 'concluido' como REPROVADO.")
@@ -522,7 +532,7 @@ def main() -> None:
                                     
                                     # 3. Avaliação no Gemini
                                     log_step("Enviando Variantes para o Diretor de Arte (Gemini) escolher a melhor...")
-                                    gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
+                                    gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=180)
                                     gemini_juri.abrir_gemini()
                                     
                                     melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(cand_a, cand_b, nome_prod, estilo_filmagem_pasta)

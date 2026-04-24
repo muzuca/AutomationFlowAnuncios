@@ -1,7 +1,7 @@
 # arquivo: integrations/gemini.py
 # descricao: fachada GeminiAnunciosViaFlow blindada para validacao de imagem,
 # geracao POV e criacao de roteiro dinâmico com suporte a Testes A/B (múltiplos roteiros).
-# Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (60s) e AUTO-F5 EM ERROS DA UI.
+# Otimizado para VELOCIDADE EXTREMA, DOWNLOAD NATIVO (180s) e AUTO-F5 EM ERROS DA UI.
 # Adicionado suporte para avaliar múltiplas variantes de vídeo e eleger a melhor via interface Web.
 
 from __future__ import annotations
@@ -59,32 +59,48 @@ class GeminiAnunciosViaFlow:
     def abrir_gemini(self) -> None:
         _log('Abrindo Gemini e validando estado da tela...')
         self.driver.get(self.url_gemini) 
-        time.sleep(3.0) # Tempo vital pro Angular carregar a página inicial
-        
-        # Esquece a URL. Vamos procurar a caixa de texto ou botão de chat.
+        time.sleep(4.0) # Aumentado para 4s para estabilizar o Angular
+
         tela_liberada = False
-        seletores_chat = [
-            'rich-textarea div[contenteditable="true"]',
-            'textarea[placeholder="Ask Gemini"]',
-            'div[aria-label*="Message"]'
-        ]
         
-        for seletor in seletores_chat:
-            try:
-                elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                if elementos and any(el.is_displayed() for el in elementos):
-                    tela_liberada = True
-                    break
-            except Exception:
-                pass
+        self._superar_bloqueios_e_onboarding()
+
+        try:
+            # Selecionamos o alvo principal (Microfone ou Caixa de Texto)
+            alvo = self.driver.find_element(By.CSS_SELECTOR, 'button.speech_dictation_mic_button, rich-textarea div[contenteditable="true"]')
+            
+            if alvo.is_displayed():
+                # --- A PROVA REAL (RAIO-X) ---
+                # Verificamos se o elemento no topo dessa coordenada é o próprio alvo.
+                # Se houver uma landing page na frente, o 'elementFromPoint' retornará a landing page, não o chat.
+                is_obstruido = self.driver.execute_script("""
+                    var el = arguments[0];
+                    var rect = el.getBoundingClientRect();
+                    var cx = rect.left + rect.width / 2;
+                    var cy = rect.top + rect.height / 2;
+                    var elAtPoint = document.elementFromPoint(cx, cy);
+                    return !el.contains(elAtPoint);
+                """, alvo)
                 
-        # Se a tela não tem onde digitar, caiu em onboarding ou bloqueio
+                if not is_obstruido:
+                    tela_liberada = True
+        except:
+            pass
+
+        # Se a tela está obstruída ou os elementos não existem, CHAMA O TRATOR
         if not tela_liberada:
-            _log('⚠️ Interface de chat não detectada logo após acessar a URL. Acionando o trator...')
-            salvar_print_debug(self.driver,"BLOQUEIO_INICIAL_DETECTADO")
+            _log('⚠️ Interface obstruída ou não detectada. Acionando o trator...', "GEMINI-IA")
+            salvar_print_debug(self.driver, "BLOQUEIO_DETECTADO")
             
             if not self._superar_bloqueios_e_onboarding():
-                raise Exception("Conta presa em tela inicial/onboarding. Abortando tentativa.")
+                _log("⚠️ Trator falhou. Tentando Refresh de emergência...")
+                self.driver.refresh()
+                time.sleep(5)
+                # Check final pós-refresh
+                if not self.driver.find_elements(By.CSS_SELECTOR, 'button.speech_dictation_mic_button'):
+                    raise Exception("Interface bloqueada. Rotacionando conta.")
+            
+            _log("✅ Interface liberada.")
             
 
     def _superar_bloqueios_e_onboarding(self) -> bool:
@@ -93,85 +109,109 @@ class GeminiAnunciosViaFlow:
         Lida com Privacy Hub, Termos de Uso e Onboarding de contas novas.
         """
         salvar_print_debug(self.driver,"VERIFICANDO_BLOQUEIOS_UI")
+        _log("🔥 ENTROU EM _superar_bloqueios_e_onboarding")
         
-        # Palavras-chave atualizadas para o carrossel de 'Privacy' e 'Extensions'
         palavras_chave = [
             'chat with gemini', 'conversar com', 'i agree', 'concordo', 'aceito',
             'continue', 'continuar', 'next', 'próximo', 'got it', 'entendi',
-            'try gemini', 'experimentar', 'ok', 'aceitar', 'accept',
+            'try gemini', 'experimentar', 'ok', 'aceitar', 'accept', 'use gemini',
             'more', 'mais', 'done', 'concluir', 'finalizar', 'agree', 'no, thanks', 'não, obrigado'
         ]
         
-        # Carrosséis de onboarding podem ter até 5 telas (Extensions, Privacy, etc)
         for rodada in range(6):
-            # 1. Tenta ESC para fechar modais simples
             try:
-                body = self.driver.find_element(By.TAG_NAME, 'body')
-                body.send_keys(Keys.ESCAPE)
-                time.sleep(0.5)
-            except Exception:
-                pass
+                self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+                time.sleep(0.1)
+            except: pass
                 
             clicou_algo = False
             
-            # 2. Busca botões por texto (Case Insensitive)
-            xpath_condicoes = " or ".join([f"contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{p}')" for p in palavras_chave])
-            xpath_monstro = f"//button[{xpath_condicoes}] | //a[{xpath_condicoes}] | //span[{xpath_condicoes}]/ancestor::button"
-            
-            # Seletores de botões azuis do Google (mdc-button)
-            seletores_css = [
-                'button.action-button', 'button.mdc-button--raised', 'a.mdc-button--raised',
-                'button[jsname="LgbsSe"]', '[data-test-id="gemini-chat-button"]',
-                'div[role="dialog"] button', '.mat-mdc-dialog-actions button'
+            seletores_prioridade = [
+                "button[data-test-id='upload-image-agree-button']", 
+                "button.agree-button",                              
+                "button[jslog*='173921']",                          
+                ".mat-mdc-dialog-actions button",                   
+                "button.mat-mdc-unelevated-button"                  
             ]
             
+            xpath_condicoes = " or ".join([f"contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{p}')" for p in palavras_chave])
+            
+            # --- 🛡️ BLINDAGEM V3: BLOQUEIO DE COMPONENTES CUSTOMIZADOS ---
+            # Adicionamos not(ancestor::bard-sidenav) para matar o clique no histórico.
+            # Também mantemos o not(ancestor::nav) por segurança para outras telas.
+            xpath_exclusao = "not(ancestor::nav) and not(ancestor::bard-sidenav)"
+            
+            xpath_monstro = (
+                f"//button[{xpath_exclusao}][{xpath_condicoes}] | "
+                f"//a[{xpath_exclusao}][{xpath_condicoes}] | "
+                f"//span[{xpath_exclusao}][{xpath_condicoes}]/ancestor::button"
+            )
+            
+            # 1. Monta lista de candidatos priorizando o MODAL
             candidatos = []
-            try:
-                candidatos.extend(self.driver.find_elements(By.XPATH, xpath_monstro))
-            except Exception: pass
+            for sel in seletores_prioridade:
+                try: 
+                    els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    # Filtro extra para seletores CSS: ignora se estiver dentro do sidenav
+                    for el in els:
+                        if not self.driver.execute_script("return arguments[0].closest('bard-sidenav')", el):
+                            candidatos.append(el)
+                except: pass
             
-            for css in seletores_css:
-                try:
-                    candidatos.extend(self.driver.find_elements(By.CSS_SELECTOR, css))
-                except Exception: pass
+            try: candidatos.extend(self.driver.find_elements(By.XPATH, xpath_monstro))
+            except: pass
             
-            # 3. Clica no primeiro que estiver visível
+            try: 
+                fab = self.driver.find_element(By.CSS_SELECTOR, "button.mat-mdc-extended-fab")
+                if not self.driver.execute_script("return arguments[0].closest('bard-sidenav')", fab):
+                    candidatos.append(fab)
+            except: pass
+
+            # 2. Executa o clique de alta pressão
             for btn in candidatos:
                 try:
                     if btn.is_displayed() and btn.is_enabled():
                         texto_btn = (btn.text or btn.get_attribute('aria-label') or '').strip().replace('\n', ' ')
-                        _log(f"🎯 Trator encontrou: '{texto_btn[:30]}'. Clicando...")
+                        _log(f"🎯 Trator encontrou: '{texto_btn[:30]}'. Executando clique de alta pressão...")
                         
-                        # Rolagem para o botão para garantir visibilidade
                         self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-                        time.sleep(0.5)
+                        self.driver.execute_script("arguments[0].focus();", btn)
                         
-                        # NOVO: Hierarquia de cliques para SPAs (React/Angular)
+                        self.driver.execute_script("""
+                            var btn = arguments[0];
+                            btn.style.pointerEvents = 'auto'; 
+                            btn.style.visibility = 'visible';
+                            var label = btn.querySelector('.mdc-button__label') || btn;
+                            var mousedown = new MouseEvent('mousedown', { 'bubbles': true, 'cancelable': true, 'view': window });
+                            var click = new MouseEvent('click', { 'bubbles': true, 'cancelable': true, 'view': window });
+                            var mouseup = new MouseEvent('mouseup', { 'bubbles': true, 'cancelable': true, 'view': window });
+                            label.dispatchEvent(mousedown);
+                            label.dispatchEvent(click);
+                            label.dispatchEvent(mouseup);
+                        """, btn)
+                        
                         try:
-                            btn.click() # Tentativa de clique FÍSICO nativo
-                        except Exception:
-                            try:
-                                ActionChains(self.driver).move_to_element(btn).click().perform() # Simulação de rato
-                            except Exception:
-                                js_click(self.driver, btn) # Seu fallback original de injeção JS
-                                
+                            ActionChains(self.driver).move_to_element(btn).click().perform()
+                            btn.send_keys(Keys.ENTER)
+                            btn.send_keys(Keys.SPACE)
+                        except: pass
+                            
                         clicou_algo = True
-                        time.sleep(3.0) # Aumentado de 2.0 para 3.0: Espera a animação pesada do modal ou navegação de SPA
+                        _log("⏳ Clique disparado. Validando transição...")
+                        salvar_print_debug(self.driver,"VERIFICANDO SE CLICOU NO BOTAO DE BLOQUEIO")
+                        time.sleep(0.8) 
                         break 
-                except Exception:
-                    continue
+                except: continue
             
-            # Verifica se a caixa de texto finalmente apareceu (objetivo final)
+            # 3. Verificação de Sucesso
             try:
                 textarea = self.driver.find_elements(By.CSS_SELECTOR, 'rich-textarea div[contenteditable="true"]')
                 if textarea and textarea[0].is_displayed():
                     _log("✅ Interface de chat liberada!")
                     return True
-            except Exception:
-                pass
+            except: pass
 
-            if not clicou_algo:
-                break
+            if not clicou_algo: break
                 
         return False
 
@@ -592,33 +632,30 @@ class GeminiAnunciosViaFlow:
             
         return None
 
-    def _aguardar_fim_analise(self, timeout: int = 120) -> bool:
+    def _aguardar_fim_analise(self, timeout: int = 180) -> bool:
         """
         Lógica baseada puramente no estado dos botões (Stop vs Mic/Send).
         Identifica quando o processamento terminou validando o sumiço do Stop
         e o reaparecimento do Microfone ou Seta de Envio.
         """
-        _log('Gemini processando... Monitorando estado dos botões (Stop / Mic / Send).')
+        _log(f'Gemini processando... Monitorando botões (Timeout: {timeout}s).')
         salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_INICIO")
         fim = time.time() + timeout
         
         # Pausa obrigatória para o Angular processar o clique e renderizar o botão Stop
-        time.sleep(3.0)
-        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_POS_3SEG")
+        time.sleep(5.0)
+        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_POS_5SEG")
         
         while time.time() < fim:
             try:
                 # 1. Procura ativamente pelo botão de STOP na tela
-                # O HTML que você mandou tem a classe 'stop' e aria-label 'Stop response'
                 botoes_stop = self.driver.find_elements(By.CSS_SELECTOR, 'button.stop, button[aria-label="Stop response"], button[aria-label*="Stop"]')
                 
                 if botoes_stop and any(b.is_displayed() for b in botoes_stop):
-                    # Se o Stop está na tela, a IA inegavelmente ainda está gerando texto
+                    # IA ainda gerando...
                     pass
                 else:
-                    salvar_print_debug(self.driver,"AGUARDANDO_APARECER_RESPOSTA")
                     # 2. O Stop SUMIU. Precisamos confirmar se a interface voltou ao estado ocioso
-                    # Procura pelo botão do Microfone (caixa vazia) OU botão de Enviar (caixa com texto)
                     botoes_ociosos = self.driver.find_elements(
                         By.CSS_SELECTOR, 
                         'button.speech_dictation_mic_button, button[aria-label*="microphone" i], button[aria-label*="Microfone" i], button.send-button, button[aria-label*="Send" i]'
@@ -634,22 +671,27 @@ class GeminiAnunciosViaFlow:
                             return True
                             
             except StaleElementReferenceException:
-                # A DOM piscou exatamente na hora da leitura. Ignora e tenta no próximo loop.
                 pass
             except Exception:
                 pass
                 
-            # Verifica a tela a cada meio segundo
             time.sleep(0.5)
             
+        # --- 📸 O PONTO CHAVE: PRINT ANTES DE MORRER ---
         _log(f'Aviso: Timeout de {timeout}s atingido aguardando mudança nos botões.')
-        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_TIMEOUT_FALHA")
+        
+        # Tira o print no último segundo possível para vermos se o Stop ainda estava lá
+        salvar_print_debug(self.driver, "DETALHE_ESTADO_TELA_NA_FALHA")
+        
         return False
     
-    def _aguardar_resposta_textual(self, timeout: int = 120) -> str:
+    def _aguardar_resposta_textual(self, timeout: int = 180) -> str:
         finalizou = self._aguardar_fim_analise(timeout=timeout)
         
         if not finalizou:
+            # 📸 PRINT DE SEGURANÇA ANTES DO REFRESH
+            salvar_print_debug(self.driver, "ESTADO_TELA_PRE_RECOVERY")
+
             _log('⚠️ Timeout na UI detectado. Forçando F5 Recovery e reinício da etapa...')
             self.driver.refresh()
             time.sleep(3.0) # Tempo para o Chrome estabilizar pós-refresh
@@ -657,6 +699,8 @@ class GeminiAnunciosViaFlow:
             
             # Em vez de tentar ler um texto que sumiu, retornamos um sinal de RESET
             return 'RECOVERY_TRIGGERED'
+        
+        time.sleep(2.0) # Pausa para o Angular renderizar o texto final
         
         # --- POLLING INTELIGENTE ---
         _log("Iniciando captura dinâmica de texto (Polling)...")
@@ -681,59 +725,62 @@ class GeminiAnunciosViaFlow:
             raise FileNotFoundError(f'Arquivo nao encontrado: {caminho}')
         _log(f'Anexando arquivo: {caminho.name}')
         
-        # 🚨 ADIÇÃO: Limpa qualquer lixo do Windows antes de começar
         from integrations.utils import forcar_fechamento_janela_windows
         forcar_fechamento_janela_windows()
 
         try:
             scroll_ao_fim(self.driver)
             botao_mais = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[aria-label="Open upload file menu"]')))
-            js_click(self.driver,botao_mais)
+            js_click(self.driver, botao_mais)
             
             upload_files = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'button[data-test-id="local-images-files-uploader-button"]')))
-            js_click(self.driver,upload_files)
+            js_click(self.driver, upload_files)
             
             input_file = self._encontrar_input_file_visivel_ou_oculto()
             self.driver.execute_script(
                 "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1;",
                 input_file,
             )
-            input_file.send_keys(str(caminho.resolve()))
+
+            # INJEÇÃO DO ARQUIVO
+            input_file.send_keys(str(caminho.resolve()))         
             _log(f'Upload iniciado para: {caminho.name}')
-            
+
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-            # 🚨 ADIÇÃO: Se o clique acima abriu a janela por erro de foco, mata ela DE NOVO antes de injetar
-            forcar_fechamento_janela_windows()
             
             is_video = caminho.suffix.lower() in ['.mov', '.mp4', '.avi', '.mkv', '.webm']
-            
             if is_video:
-                time.sleep(3.0) 
+                time.sleep(1.0) 
 
             timeout_upload = 180 if is_video else 20
             self._aguardar_upload_estabilizar(timeout=timeout_upload, is_video=is_video)
             
         except TimeoutException:
-            # Tiramos o 'as e' para o Selenium não empurrar o lixo do stacktrace
-            _log(f'ERRO: Timeout ao anexar {caminho.name}. A interface de upload falhou/bloqueou.')
-            salvar_print_debug(self.driver,f"ERRO_ANEXO_{caminho.stem}")
+            # REDE DE SEGURANÇA: Se ainda assim der timeout, tenta uma limpeza final
+            _log(f'🛡️ Timeout detectado em {caminho.name}. Tentativa final de limpeza UI...')
+            self._superar_bloqueios_e_onboarding()
             
-            # Subimos um erro limpo para o main.py não printar lixo
+            _log(f'ERRO: Timeout ao anexar {caminho.name}.')
+            salvar_print_debug(self.driver, f"ERRO_ANEXO_{caminho.stem}")
             raise Exception(f"Timeout na interface ao tentar anexar {caminho.name}.")
             
         except Exception as e:
-            # Pega apenas a primeira linha do erro, ignorando todo o "\n Stacktrace: ..."
             msg_limpa = str(e).split('\n')[0] 
             _log(f'ERRO: Falha ao anexar {caminho.name}: {msg_limpa}')
             raise Exception(f"Falha de sistema ao anexar {caminho.name}: {msg_limpa}")
-
+        
     def enviar_prompt(
         self,
         prompt: str,
-        timeout: int = 120,
+        timeout: int = 180,
         aguardar_resposta: bool = True,
     ) -> str:
         _log(f'Enviando prompt ({len(prompt)} chars)...')
+
+        # --- NOVO: COOLDOWN CONTRA ERRO 13 ---
+        time.sleep(2.5) # Espera o Gemini "respirar" antes de cada envio
+        # -------------------------------------
+
         salvar_print_debug(self.driver,"PROMPT_PREPARACAO")
         
         try:
@@ -882,7 +929,7 @@ class GeminiAnunciosViaFlow:
                     nome_produto=nome_produto,
                     criterios_avaliacao=criterios
                 )
-                resposta = self.enviar_prompt(prompt, timeout=120, aguardar_resposta=True)
+                resposta = self.enviar_prompt(prompt, timeout=180, aguardar_resposta=True)
                 
                 if resposta == 'RECOVERY_TRIGGERED' or not resposta:
                     _log("⚠️ Falha ao avaliar imagens, tentando novamente...")
@@ -1030,7 +1077,7 @@ class GeminiAnunciosViaFlow:
             _log('Botão nativo de download clicado.')
 
             novo_arquivo = None
-            fim_down = time.time() + 60 
+            fim_down = time.time() + 180 
             while time.time() < fim_down:
                 scroll_ao_fim(self.driver)
                 arquivos_agora = set(downloads_dir.glob("*"))
@@ -1073,7 +1120,7 @@ class GeminiAnunciosViaFlow:
     def _validar_imagem_produto(
         self,
         caminho_imagem: Path,
-        timeout_resposta: int = 60, # Timeout aumentado conforme solicitado
+        timeout_resposta: int = 180, # Timeout aumentado conforme solicitado
         max_reenvios_prompt: int = 2, # Vai tentar até 3 vezes na mesma conta
     ) -> bool:
         """
@@ -1390,7 +1437,7 @@ class GeminiAnunciosViaFlow:
                 self.abrir_novo_chat_limpo()
                 
                 _log(f"Enviando Prompt Mestre de Treinamento (Tentativa {tentativa}/3)...")
-                res_treino = self.enviar_prompt(prompt_mestre_linear, timeout=60, aguardar_resposta=True)
+                res_treino = self.enviar_prompt(prompt_mestre_linear, timeout=180, aguardar_resposta=True)
                 
                 if res_treino in erros_conhecidos:
                      _log(f"⚠️ A interface engasgou no Treinamento ({res_treino}). Reiniciando chat...")
@@ -1403,7 +1450,7 @@ class GeminiAnunciosViaFlow:
                         self.anexar_arquivo_local(caminho)
 
                 _log(f"Solicitando geração do roteiro em {qtd_cenas} cenas...")
-                resposta = self.enviar_prompt(prompt_execucao_linear, timeout=120, aguardar_resposta=True)
+                resposta = self.enviar_prompt(prompt_execucao_linear, timeout=180, aguardar_resposta=True)
 
                 if resposta in erros_conhecidos:
                     _log(f"⚠️ A interface engasgou na Execução ({resposta}). Reiniciando chat...")
@@ -1443,7 +1490,7 @@ class GeminiAnunciosViaFlow:
         # ...
 
         _log("Solicitando a decisão ao Gemini...")
-        resposta_ia = self.enviar_prompt(prompt_juri, timeout=120, aguardar_resposta=True)
+        resposta_ia = self.enviar_prompt(prompt_juri, timeout=180, aguardar_resposta=True)
 
         if not resposta_ia or "TIMEOUT" in resposta_ia or "ERRO" in resposta_ia:
             _log(f"Aviso: O Gemini falhou em avaliar ({resposta_ia}). Assumindo a Variante 1.")
@@ -1483,7 +1530,7 @@ class GeminiAnunciosViaFlow:
 
             # ...
             prompt = PROMPT_CLASSIFICACAO_ARQUIVOS.format(nomes_arquivos=', '.join(nomes_arquivos))
-            resposta = self.enviar_prompt(prompt, timeout=120, aguardar_resposta=True)
+            resposta = self.enviar_prompt(prompt, timeout=180, aguardar_resposta=True)
             # ...
 
             # Se o sinal de Recovery foi disparado, o loop recomeça (tentativa 2)

@@ -1,5 +1,5 @@
 # arquivo: config.py
-# descricao: carrega o ambiente do projeto, centraliza caminhos e parâmetros globais, e expõe as contas HUMBLE sincronizadas para que a automação use uma fonte única e consistente de configuração.
+# descricao: carrega o ambiente do projeto, centraliza caminhos e parâmetros globais...
 from __future__ import annotations
 
 import os
@@ -28,9 +28,10 @@ class Settings:
     downloads_dir: str
     ffmpeg_path: str
     gemini_url: str
-    flow_url: str  # <--- NOVA PROPRIEDADE
+    flow_url: str
     google_login_url: str
     chrome_headless: bool
+    use_proxy: bool  # <--- NOVA PROPRIEDADE
     chrome_implicit_wait: int
     chrome_page_load_timeout: int
     accounts: list[GoogleAccount]
@@ -90,10 +91,11 @@ def get_settings(reload: bool = True) -> Settings:
         downloads_dir=_get_env('DOWNLOADS_DIR', required=True),
         ffmpeg_path=_get_env('FFMPEG_PATH', default='ffmpeg.exe'),
         gemini_url=_get_env('GEMINI_URL', default='https://gemini.google.com/app'),
-        flow_url=_get_env('FLOW_URL', default='https://labs.google/fx/pt/tools/flow'), # <--- MAPEAMENTO DO .ENV
+        flow_url=_get_env('FLOW_URL', default='https://labs.google/fx/pt/tools/flow'),
         google_login_url=_get_env('GOOGLE_LOGIN_URL', default='https://accounts.google.com/'),
         chrome_headless=_get_bool('CHROME_HEADLESS', default=False),
+        use_proxy=_get_bool('USE_PROXY', default=False), # <--- MAPEAMENTO DA FLAG NO .ENV
         chrome_implicit_wait=int(_get_env('CHROME_IMPLICIT_WAIT', default='5')),
-        chrome_page_load_timeout=int(_get_env('CHROME_PAGE_LOAD_TIMEOUT', default='60')),
+        chrome_page_load_timeout=int(_get_env('CHROME_PAGE_LOAD_TIMEOUT', default='120')),
         accounts=_load_accounts(),
     )

@@ -174,3 +174,20 @@ def prepare_task(task: AdTask) -> PreparedTaskResult:
 def describe_task(task: AdTask) -> str:
     parts = [f'{asset.role}: {asset.path.name}' for asset in task.assets]
     return f'Tarefa {task.task_id} | modelo={task.model_name} | filmagem={task.shoot_type} | arquivos=[{", ".join(parts)}]'
+
+def consolidar_arquivos_unificados(pasta_task: Path, metadados_texto: str, roteiros_lista: list, legendas_lista: list):
+    """Cria os 3 arquivos unificados com divisores claros."""
+    # 1. metadados.txt
+    (pasta_task / "metadados.txt").write_text(metadados_texto, encoding='utf-8')
+
+    # 2. roteiros.txt
+    conteudo_roteiros = ""
+    for i, roteiro in enumerate(roteiros_lista, 1):
+        conteudo_roteiros += f"=== ROTEIRO {i} ===\n{roteiro}\n\n"
+    (pasta_task / "roteiros.txt").write_text(conteudo_roteiros.strip(), encoding='utf-8')
+
+    # 3. legendas.txt
+    conteudo_legendas = ""
+    for i, legenda in enumerate(legendas_lista, 1):
+        conteudo_legendas += f"=== LEGENDA {i} ===\n{legenda}\n\n"
+    (pasta_task / "legendas.txt").write_text(conteudo_legendas.strip(), encoding='utf-8')

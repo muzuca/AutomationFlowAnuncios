@@ -2,6 +2,8 @@
 import os
 import time
 import ctypes
+import random
+import shutil
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -139,3 +141,35 @@ def salvar_ultimo_prompt(texto: str) -> None:
             f.write(texto)
     except Exception as e:
         _log(f"Aviso: Não foi possível guardar o log do prompt: {e}", "SISTEMA")
+
+def obter_proxy_aleatorio() -> str | None:
+    """
+    Lê a lista de proxies do arquivo proxies.txt na raiz do projeto.
+    Retorna uma string no formato http://user:pass@ip:port ou None.
+    """
+    caminho = Path("proxies.txt")
+    
+    if not caminho.exists():
+        _log("⚠️ Arquivo proxies.txt não encontrado na raiz.")
+        return None
+    
+    # Lê as linhas, remove espaços e ignora linhas vazias
+    linhas = caminho.read_text(encoding='utf-8').splitlines()
+    proxies = [l.strip() for l in linhas if l.strip() and not l.startswith('#')]
+    
+    if not proxies:
+        _log("⚠️ O arquivo proxies.txt está vazio.")
+        return None
+        
+    escolhido = random.choice(proxies)
+    return escolhido
+
+def limpar_residuos_proxy():
+    """Remove extensões de proxy temporárias de execuções anteriores."""
+    proxy_dir = Path("logs/proxy_ext")
+    if proxy_dir.exists():
+        try:
+            shutil.rmtree(proxy_dir)
+            _log("🧹 Resíduos de extensões de proxy limpos.")
+        except Exception as e:
+            _log(f"⚠️ Não foi possível limpar pasta de extensões: {e}")

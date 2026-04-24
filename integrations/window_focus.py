@@ -6,8 +6,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException, NoAlertPresentException
 import time
 
-# Importa o verificador de headless
-from integrations.utils import is_headless
+# 🚨 IMPORTAÇÕES DE LOG E UTILITÁRIOS
+from integrations.utils import is_headless, _log
 
 
 def browser_ready_for_next_step(driver) -> bool:
@@ -65,13 +65,13 @@ def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_betwe
     Tenta destravar a janela várias vezes. 
     Se estiver em modo visual (headless=False), usa pyautogui para forçar o fecho de popups nativos do SO.
     """
-    print('Verificando estado inicial da janela do navegador (Selenium Seguro)...')
+    _log('Verificando estado inicial da janela do navegador (Selenium Seguro)...')
     
     # =====================================================================
     # CHECAGEM DE HEADLESS E "CLICK + ESC" FÍSICO
     # =====================================================================
     if not is_headless(driver):
-        print("[LOGIN] Modo visual detetado. Disparando Click e ESC para matar popup do SO...")
+        _log("[LOGIN] Modo visual detetado. Disparando Click e ESC para matar popup do SO...")
         try:
             import pyautogui
             
@@ -83,10 +83,10 @@ def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_betwe
             pyautogui.press('esc')
             time.sleep(0.2)
             pyautogui.press('esc')
-            print("[LOGIN] ✔ Click e ESC aplicados com sucesso.")
+            _log("[LOGIN] ✔ Click e ESC aplicados com sucesso.")
             
         except ImportError:
-            print("[LOGIN] ⚠️ PyAutoGUI não instalado. Tentando ESC via Selenium ActionChains...")
+            _log("[LOGIN] ⚠️ PyAutoGUI não instalado. Tentando ESC via Selenium ActionChains...")
             from selenium.webdriver.common.action_chains import ActionChains
             from selenium.webdriver.common.keys import Keys
             try:
@@ -94,21 +94,21 @@ def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_betwe
             except Exception:
                 pass
         except Exception as e:
-            print(f"[LOGIN] Aviso ao tentar click/esc físico: {e}")
+            _log(f"[LOGIN] Aviso ao tentar click/esc físico: {e}")
     else:
-        print("[LOGIN] Modo Headless detetado. Ignorando clique físico (PyAutoGUI) para não interferir no monitor.")
+        _log("[LOGIN] Modo Headless detetado. Ignorando clique físico (PyAutoGUI) para não interferir no monitor.")
     # =====================================================================
 
     # Continua com a verificação normal do DOM
     for attempt in range(1, attempts + 1):
-        print(f'Tentativa {attempt}/{attempts}: libertando DOM/alertas...')
+        _log(f'Tentativa {attempt}/{attempts}: libertando DOM/alertas...')
 
         if dismiss_chrome_native_popup(driver):
-            print(f'Janela validada com sucesso na tentativa {attempt}')
+            _log(f'Janela validada com sucesso na tentativa {attempt}')
             return True
 
-        print(f'Tentativa {attempt}: DOM ainda ocupado, retry em {wait_between}s...')
+        _log(f'Tentativa {attempt}: DOM ainda ocupado, retry em {wait_between}s...')
         time.sleep(wait_between)
 
-    print('Alerta pode ter persistido, mas o fluxo irá tentar prosseguir.')
+    _log('Alerta pode ter persistido, mas o fluxo irá tentar prosseguir.')
     return False

@@ -10,6 +10,9 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
+# 🚨 IMPORTAÇÃO DO LOG UNIFICADO
+from integrations.utils import _log
+
 ENV_PATH = Path(".env")
 
 def time_now():
@@ -84,7 +87,7 @@ def sincronizar_credenciais_humble():
         try:
             export_url = _obter_url_exportacao()
             if tentativa == 1:
-                print(f"[{time_now()}] Sincronizando contas via ID do Google Doc...")
+                _log("Sincronizando contas via ID do Google Doc...")
             
             response = requests.get(export_url, headers=headers, timeout=30)
             
@@ -93,7 +96,7 @@ def sincronizar_credenciais_humble():
             
             credenciais = _extrair_credenciais_do_documento(response.text)
             if not credenciais:
-                print(f"[{time_now()}] ❌ Erro: Formato LOGIN:/SENHA: não encontrado.")
+                _log("❌ Erro: Formato LOGIN:/SENHA: não encontrado no documento.")
                 return
                 
             # Atualização do .env preservando o topo
@@ -108,16 +111,16 @@ def sincronizar_credenciais_humble():
             conteudo_final = conteudo_base + "\n" + "\n".join(novo_bloco) + "\n"
             ENV_PATH.write_text(conteudo_final.strip() + "\n", encoding="utf-8")
             
-            print(f"[{time_now()}] ✅ Sucesso: {len(credenciais)} contas carregadas.")
+            _log(f"✅ Sucesso: {len(credenciais)} contas carregadas para o rodízio.")
             return # Sai da função após o sucesso
 
         except Exception as e:
             if tentativa < max_tentativas:
-                print(f"[{time_now()}] ⚠️ Google instável (Erro {tentativa}/{max_tentativas}). Retentando em 3s...")
+                _log(f"⚠️ Google instável (Erro {tentativa}/{max_tentativas}). Retentando em 3s...")
                 time.sleep(3)
             else:
                 # Na última tentativa, ele avisa que vai usar o que já tem no .env
-                print(f"[{time_now()}] ❌ Falha após {max_tentativas} tentativas. Mantendo cache local: {e}")
+                _log(f"❌ Falha após {max_tentativas} tentativas. Mantendo cache local: {e}")
 
 def executar_sincronizacao(driver=None):
     """Ponte de execução chamada pelo orquestrador."""
