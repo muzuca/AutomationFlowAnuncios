@@ -106,7 +106,6 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
         # =========================================================
 
         # --- ETAPA 2: SENHA ---
-        # No modo Headless, o campo de senha às vezes demora a ser habilitado na DOM
         password_input = wait_for_visible(driver, By.CSS_SELECTOR, 'input[type="password"]', timeout=40)
         password_input.clear()
         password_input.send_keys(account.password)
@@ -116,31 +115,57 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
         password_next_button = wait_for_clickable(driver, By.ID, 'passwordNext', timeout=20)
         password_next_button.click()
 
+        # =========================================================
+        # 🛡️ BLINDAGEM DE CREDENCIAL (DETECTOR DE SENHA ALTERADA)
+        # =========================================================
+        _log("Validando autenticação e mensagens de erro...", "LOGIN")
+        time.sleep(3) # Pausa para o Google processar o erro ou login
+
+        mensagens_erro_credencial = [
+            "Sua senha foi alterada", "Senha incorreta", "Wrong password", 
+            "Your password was changed", "Tente novamente com a senha atual",
+            "senha mudou"
+        ]
+        
+        corpo_pagina = (driver.page_source or "").lower()
+        if any(msg.lower() in corpo_pagina for msg in mensagens_erro_credencial):
+            _log(f"🚨 CREDENCIAL INVÁLIDA: A senha da conta {account.email} está incorreta ou foi alterada.", "LOGIN")
+            salvar_print_debug(driver, "ERRO_SENHA_INVALIDA")
+            raise Exception(f"CREDENTIALS_EXPIRED: A conta {account.email} precisa de nova senha.")
+
         # --- ETAPA 3: VALIDAÇÃO DE SUCESSO ---
         _log("Aguardando confirmação de redirecionamento pós-login...", "LOGIN")
-        WebDriverWait(driver, 180).until(
-            lambda d: 'myaccount.google.com' in d.current_url
-            or 'accounts.google.com' not in d.current_url
-            or 'gemini.google.com' in d.current_url
-        )
-        
+        try:
+            WebDriverWait(driver, 40).until(
+                lambda d: 'myaccount.google.com' in d.current_url
+                or 'accounts.google.com' not in d.current_url
+                or 'gemini.google.com' in d.current_url
+                or 'google.com/search' in d.current_url
+            )
+        except TimeoutException:
+            # Check final se parou em alguma tela de "Proteja sua conta" ou "Confirmar e-mail"
+            if "recovery" in driver.current_url or "challenge" in driver.current_url:
+                _log(f"⚠️ Conta {account.email} parou em desafio de segurança/recuperação.", "LOGIN")
+                raise Exception(f"SECURITY_CHALLENGE: Conta {account.email} bloqueada por segurança.")
+            raise
+
         time.sleep(2)
         salvar_print_debug(driver, "login_05_sucesso_final")
         _log("Login no Google concluído com sucesso.", "LOGIN")
 
-    except TimeoutException as exc:
-        # Se falhar, tira um print da tela de erro exata para diagnóstico
-        salvar_print_debug(driver, "login_ERRO_CRITICO")
-        url_atual = driver.current_url
-        _log(f"O login travou na URL: {url_atual}", "LOGIN ERRO")
-        raise RuntimeError('Não foi possível concluir o login no Google dentro do tempo esperado.') from exc
+    except Exception as exc:
+        salvar_print_debug(driver, "login_ERRO_FINAL")
+        url_final = driver.current_url
+        _log(f"Falha no processo de login na URL: {url_final}", "LOGIN ERRO")
+        # Repassa a exceção para o main.py rotacionar a conta
+        raise exc
 
 
 def open_gemini(driver: WebDriver, settings: Settings) -> None:
     try:
         _log("Abrindo Gemini App...", "LOGIN")
         driver.get(settings.gemini_url)
-        WebDriverWait(driver, 180).until(lambda d: 'gemini.google.com' in d.current_url)
+        WebDriverWait(driver, 60).until(lambda d: 'gemini.google.com' in d.current_url)
         
         time.sleep(4)
         salvar_print_debug(driver, "login_06_gemini_carregado")

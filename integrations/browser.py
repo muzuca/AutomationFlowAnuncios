@@ -178,6 +178,14 @@ def create_driver(settings: Settings):
     
     # Inicializa o driver (PURO SELENIUM)
     driver = webdriver.Chrome(service=service, options=options)
+
+    # ==========================================================
+    # WINDOW SIZE (SOLUÇÃO PARA HEADLESS)
+    # ==========================================================
+    # Coloque isso IMEDIATAMENTE após criar o driver para garantir 
+    # que o layout do Gemini/Flow não renderize em modo mobile.
+    driver.set_window_size(1920, 1080)   
+    driver.maximize_window() # Garante que ele ocupe todo o viewport virtual
     
     # --- 🛡️ AJUSTE DE DOWNLOAD CDP (OBRIGATÓRIO PARA HEADLESS/FLOW) ---
     downloads_path = str(Path("logs/downloads").resolve())

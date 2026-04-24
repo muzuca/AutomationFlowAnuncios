@@ -4,6 +4,9 @@ import time
 import ctypes
 import random
 import shutil
+import re
+import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -16,6 +19,23 @@ def is_headless(*args, **kwargs) -> bool:
     load_dotenv(override=True)
     # Pega o valor do .env, joga pra minúsculo e vê se é 'true'
     return os.getenv("CHROME_HEADLESS", "False").lower() == "true"
+
+def setup_logging() -> None:
+    """Configura o nível de ruído das bibliotecas externas e o formato padrão de log do Python."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(message)s',
+        datefmt='%H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
+
+    logging.getLogger('selenium').setLevel(logging.CRITICAL)
+    logging.getLogger('urllib3').setLevel(logging.CRITICAL)
+    logging.getLogger('WDM').setLevel(logging.CRITICAL)
+    logging.getLogger('webdriver_manager').setLevel(logging.CRITICAL)
+    logging.getLogger('tensorflow').setLevel(logging.CRITICAL)
+    logging.getLogger('absl').setLevel(logging.CRITICAL)
 
 def _log(msg: str, prefixo: str = "SISTEMA") -> None:
     """
@@ -34,6 +54,15 @@ def _log(msg: str, prefixo: str = "SISTEMA") -> None:
             f.write(texto + "\n")
     except: pass
 
+def log_step(message: str) -> None:
+    _log(message, prefixo="SISTEMA")
+
+def log_success(message: str) -> None:
+    _log(f'OK: {message}', prefixo="SISTEMA")
+
+def log_error(message: str) -> None:
+    _log(f'ERRO: {message}', prefixo="SISTEMA")
+    
 def salvar_print_debug(driver, nome_fase: str):
     """Sua função mestre com a tarja vermelha de URL."""
     load_dotenv(override=True)
@@ -173,3 +202,77 @@ def limpar_residuos_proxy():
             _log("🧹 Resíduos de extensões de proxy limpos.")
         except Exception as e:
             _log(f"⚠️ Não foi possível limpar pasta de extensões: {e}")
+
+def formatar_roteiro_limpo(texto_bruto: str) -> str:
+    """Limpa lixo da UI do Gemini e força as quebras de linha para evitar colapso no flow.py"""
+    crases = chr(96) * 3
+    lixos = ["Show thinking Gemini said", "Show thinking", "Gemini said", f"{crases}text", crases, "PROMPT TÉCNICO:"]
+    for lixo in lixos:
+        texto_bruto = texto_bruto.replace(lixo, "")
+    
+    match_inicio = re.search(r'\[[Cc]ena\s*1', texto_bruto, re.IGNORECASE)
+    if match_inicio:
+        texto_bruto = texto_bruto[match_inicio.start():]
+        
+    texto_bruto = re.sub(r'(\[[Cc]ena\s*\d+)', r'\n\n\1', texto_bruto, flags=re.IGNORECASE)
+    texto_bruto = re.sub(r'(\[[Ll]egenda)', r'\n\n\1', texto_bruto, flags=re.IGNORECASE)
+    
+    texto_bruto = re.sub(r'\n{3,}', '\n\n', texto_bruto)
+    return texto_bruto.strip()
+
+
+def salvar_bloco_unificado(caminho_arquivo: Path, titulo_bloco: str, texto: str) -> None:
+    """Salva de forma inteligente num arquivo único. Substitui o bloco se existir, ou anexa no final."""
+    conteudo = caminho_arquivo.read_text(encoding='utf-8') if caminho_arquivo.exists() else ""
+    marcador = f"=== {titulo_bloco} ==="
+    novo_bloco = f"{marcador}\n{texto.strip()}\n\n"
+    
+    if marcador in conteudo:
+        # Usa Regex para casar o marcador até o próximo "===" ou até o fim do arquivo, e substitui.
+        padrao = rf"{marcador}.*?(?=\n===|$)"
+        texto_final = re.sub(padrao, novo_bloco.strip(), conteudo, flags=re.DOTALL)
+    else:
+        texto_final = conteudo.strip() + "\n\n" + novo_bloco
+        
+    caminho_arquivo.write_text(texto_final.strip() + "\n\n", encoding='utf-8')
+
+
+def extrair_e_salvar_legenda(texto_limpo: str, caminho_legenda_unificada: Path, num_roteiro: int) -> None:
+    """Procura a tag da legenda no roteiro gerado e salva no arquivo unificado de legendas."""
+    match = re.search(r"\[[Ll]egenda.*?\](.*)", texto_limpo, re.IGNORECASE | re.DOTALL)
+    if match:
+        texto_legenda = match.group(1).strip()
+        marcadores_fim = ["1. EXEMPLO", "DIRETRIZ FINAL", "Confirme brevemente", "SISTEMA CALIBRADO", "[Cena"]
+        for marcador in marcadores_fim:
+            idx = texto_legenda.upper().find(marcador.upper())
+            if idx != -1:
+                texto_legenda = texto_legenda[:idx].strip()
+                
+        salvar_bloco_unificado(caminho_legenda_unificada, f"LEGENDA {num_roteiro}", texto_legenda)
+        _log(f'OK: Legenda extraída e salva no arquivo unificado (Legenda {num_roteiro}).', "SISTEMA")
+
+
+def salvar_ultima_conta_env(email: str) -> None:
+    """Atualiza ou insere a variável LAST_ACCOUNT_INDEX no arquivo .env com o EMAIL da conta"""
+    try:
+        env_path = Path('.env')
+        if not env_path.exists():
+            env_path.write_text(f"LAST_ACCOUNT_INDEX={email}\n", encoding='utf-8')
+            return
+        
+        lines = env_path.read_text(encoding='utf-8').splitlines()
+        found = False
+        new_lines = []
+        for line in lines:
+            if line.startswith("LAST_ACCOUNT_INDEX="):
+                new_lines.append(f"LAST_ACCOUNT_INDEX={email}")
+                found = True
+            else:
+                new_lines.append(line)
+        
+        if not found:
+            new_lines.append(f"LAST_ACCOUNT_INDEX={email}")
+            
+        env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
+    except Exception as e:
+        _log(f"Aviso: Não foi possível salvar o email da conta no .env: {e}", "SISTEMA")            

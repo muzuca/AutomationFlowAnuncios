@@ -17,112 +17,30 @@ from datetime import datetime
 
 from acesso_humble import executar_sincronizacao
 from anuncios.processor import describe_task, get_next_pending_task, prepare_task
+# ADICIONADO: Captura de exceção específica de anexo
+from selenium.common.exceptions import TimeoutException
 from config import get_settings
 from integrations.browser import close_driver, create_driver
 from integrations.gemini import GeminiAnunciosViaFlow
 from integrations.google_login import login_google, open_gemini
-from integrations.window_focus import dismiss_chrome_native_popup_with_retry
+from integrations.window_focus import dismiss_chrome_native_popup_with_retry, fechar_popup_cromado_pos_gemini
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
 from anuncios.prompts import PROMPT_DESCRICAO_DIRETA_FRONTAL, PROMPT_DESCRICAO_DIRETA_POV, PROMPT_DESCRICAO_DIRETA_CAMINHANDO, PROMPT_DESCRICAO_DIRETA_PES, PROMPT_DESCRICAO_DIRETA_FLAT
 # 🚨 IMPORTAÇÕES DE UTILS PADRONIZADAS
-from integrations.utils import _log, limpar_diretorio_visao, limpar_residuos_proxy
-
-
-def setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s] %(message)s',
-        datefmt='%H:%M:%S',
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=True,
-    )
-
-    logging.getLogger('selenium').setLevel(logging.CRITICAL)
-    logging.getLogger('urllib3').setLevel(logging.CRITICAL)
-    logging.getLogger('WDM').setLevel(logging.CRITICAL)
-    logging.getLogger('webdriver_manager').setLevel(logging.CRITICAL)
-    logging.getLogger('tensorflow').setLevel(logging.CRITICAL)
-    logging.getLogger('absl').setLevel(logging.CRITICAL)
-
-
-def log_step(message: str) -> None:
-    _log(message)
-
-
-def log_success(message: str) -> None:
-    _log(f'OK: {message}')
-
-
-def log_error(message: str) -> None:
-    _log(f'ERRO: {message}')
-
-def fechar_popup_cromado_pos_gemini(driver) -> None:
-    log_step('ETAPA 7.1: validando popup nativo do Chrome apos abrir o Gemini')
-    time.sleep(1.5)
-    popup_fechado = dismiss_chrome_native_popup_with_retry(driver)
-    if popup_fechado:
-        log_success('Popup nativo do Chrome validado/fechado apos abrir o Gemini')
-    else:
-        log_error('Popup nativo do Chrome permaneceu apos abrir o Gemini')
-
-
-def salvar_ultima_conta_env(email: str) -> None:
-    """Atualiza ou insere a variável LAST_ACCOUNT_INDEX no arquivo .env com o EMAIL da conta"""
-    try:
-        env_path = Path('.env')
-        if not env_path.exists():
-            env_path.write_text(f"LAST_ACCOUNT_INDEX={email}\n", encoding='utf-8')
-            return
-        
-        lines = env_path.read_text(encoding='utf-8').splitlines()
-        found = False
-        new_lines = []
-        for line in lines:
-            if line.startswith("LAST_ACCOUNT_INDEX="):
-                new_lines.append(f"LAST_ACCOUNT_INDEX={email}")
-                found = True
-            else:
-                new_lines.append(line)
-        
-        if not found:
-            new_lines.append(f"LAST_ACCOUNT_INDEX={email}")
-            
-        env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
-    except Exception as e:
-        log_error(f"Aviso: Não foi possível salvar o email da conta no .env: {e}")
-
-
-def formatar_roteiro_limpo(texto_bruto: str) -> str:
-    """Limpa lixo da UI do Gemini e força as quebras de linha para evitar colapso no flow.py"""
-    crases = chr(96) * 3
-    lixos = ["Show thinking Gemini said", "Show thinking", "Gemini said", f"{crases}text", crases, "PROMPT TÉCNICO:"]
-    for lixo in lixos:
-        texto_bruto = texto_bruto.replace(lixo, "")
-    
-    match_inicio = re.search(r'\[[Cc]ena\s*1', texto_bruto, re.IGNORECASE)
-    if match_inicio:
-        texto_bruto = texto_bruto[match_inicio.start():]
-        
-    texto_bruto = re.sub(r'(\[[Cc]ena\s*\d+)', r'\n\n\1', texto_bruto, flags=re.IGNORECASE)
-    texto_bruto = re.sub(r'(\[[Ll]egenda)', r'\n\n\1', texto_bruto, flags=re.IGNORECASE)
-    
-    texto_bruto = re.sub(r'\n{3,}', '\n\n', texto_bruto)
-    return texto_bruto.strip()
-
-
-def extrair_e_salvar_legenda(texto_limpo: str, caminho_legenda: Path) -> None:
-    """Procura a tag da legenda no roteiro gerado e a salva em arquivo isolado"""
-    match = re.search(r"\[[Ll]egenda.*?\](.*)", texto_limpo, re.IGNORECASE | re.DOTALL)
-    if match:
-        texto_legenda = match.group(1).strip()
-        marcadores_fim = ["1. EXEMPLO", "DIRETRIZ FINAL", "Confirme brevemente", "SISTEMA CALIBRADO"]
-        for marcador in marcadores_fim:
-            idx = texto_legenda.upper().find(marcador.upper())
-            if idx != -1:
-                texto_legenda = texto_legenda[:idx].strip()
-        caminho_legenda.write_text(texto_legenda, encoding='utf-8')
-        log_success(f'Legenda extraída e salva isoladamente: {caminho_legenda.name}')
+from integrations.utils import (
+    setup_logging,
+    _log, 
+    log_step,          
+    log_success,       
+    log_error,
+    limpar_diretorio_visao, 
+    limpar_residuos_proxy,
+    formatar_roteiro_limpo,
+    salvar_bloco_unificado,
+    extrair_e_salvar_legenda,
+    salvar_ultima_conta_env
+)
 
 def main() -> None:
     setup_logging()
@@ -268,15 +186,24 @@ def main() -> None:
                     # ETAPA IA-0: CLASSIFICAÇÃO INTELIGENTE E OCR (EXTRAÇÃO DE DADOS)
                     # =====================================================================
                     pasta_task = Path(task.folder_path)
-                    caminho_metadados = pasta_task / "Metadados_do_Produto.txt"
+                    caminho_metadados = pasta_task / "metadados.txt"
 
-                    if not caminho_metadados.exists():
+                    # Trava de segurança dupla: Verifica se os arquivos de fato já foram renomeados
+                    arquivos_ja_renomeados = any(f.name.startswith("00_Produto") for f in pasta_task.iterdir() if f.is_file())
+
+                    if not caminho_metadados.exists() or not arquivos_ja_renomeados:
                         log_step('ETAPA IA-0: Organizando arquivos e extraindo metadados de venda')
                         # Pega apenas os arquivos crus (ignora arquivos ocultos e coisas já geradas)
-                        arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "img_base" not in f.name.lower()]
+                        arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "img_base" not in f.name.lower() and "metadados" not in f.name.lower()]                        
 
                         if len(arquivos_brutos) >= 2:
-                            dados_ia = gemini.classificar_arquivos_e_extrair_dados(arquivos_brutos)
+                            # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no OCR
+                            try:
+                                dados_ia = gemini.classificar_arquivos_e_extrair_dados(arquivos_brutos)
+                            except Exception as e:
+                                if "Timeout" in str(e) or "anexar" in str(e).lower():
+                                    raise Exception(f"SWITCH_ACCOUNT: Falha anexo OCR na conta {account.email}")
+                                raise e
                             
                             if dados_ia:
                                 log_success('IA classificou os arquivos e extraiu os dados!')
@@ -363,17 +290,19 @@ def main() -> None:
                     partes_caminho_task = Path(prepared.task.folder_path).parts
                     estilo_filmagem_pasta = partes_caminho_task[-3] if len(partes_caminho_task) >= 3 else ""
 
-                    # --- CHECKPOINT INTELIGENTE: EXISTE AO MENOS UM ROTEIRO? ---
-                    # Verifica se existe o Roteiro1 ou qualquer outro válido para não abrir o Gemini à toa
+                    # --- CHECKPOINT INTELIGENTE: EXISTE AO MENOS UM ROTEIRO? (Atualizado para roteiros.txt) ---
                     tem_roteiro_pronto = False
-                    for r_idx_check in range(1, qtd_roteiros + 1):
-                        path_check = Path(task.folder_path) / f"Roteiro{r_idx_check}_Cenas.txt"
-                        if path_check.exists() and len(path_check.read_text(encoding='utf-8').strip()) > 500:
-                            tem_roteiro_pronto = True
-                            break
+                    caminho_roteiros_unificado = Path(task.folder_path) / "roteiros.txt"
+                    
+                    if caminho_roteiros_unificado.exists():
+                        conteudo_check = caminho_roteiros_unificado.read_text(encoding='utf-8')
+                        for r_idx_check in range(1, qtd_roteiros + 1):
+                            if f"=== ROTEIRO {r_idx_check} ===" in conteudo_check and len(conteudo_check) > 500:
+                                tem_roteiro_pronto = True
+                                break
                     
                     if tem_roteiro_pronto:
-                        log_success("🚀 CHECKPOINT: Roteiro detectado na pasta. Pulando login no Gemini e indo pro Flow.")
+                        log_success("🚀 CHECKPOINT: Roteiro detectado no arquivo unificado. Pulando login no Gemini e indo pro Flow.")
                         precisa_abrir_gemini = False
                         
                         # Define a imagem base para o Flow (usa a ImgBase do Roteiro 1 ou o padrão)
@@ -396,7 +325,13 @@ def main() -> None:
                             produto_valido = True
                         else:
                             log_step('ETAPA IA: Validando candidato a produto original...')
-                            produto_valido = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=180)
+                            # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar na validação
+                            try:
+                                produto_valido = gemini._validar_imagem_produto(primeira_imagem, timeout_resposta=60)
+                            except Exception as e:
+                                if "Timeout" in str(e) or "anexar" in str(e).lower():
+                                    raise Exception(f"SWITCH_ACCOUNT: Falha anexo validação na conta {account.email}")
+                                raise e
 
                         if not produto_valido:
                             # --- TRATAMENTO DE EXCEÇÃO (DESCARTE RÁPIDO) ---
@@ -433,8 +368,8 @@ def main() -> None:
 
                     for r_idx in range(1, qtd_roteiros + 1):
                         sufixo_rot = f"Roteiro{r_idx}"
-                        caminho_txt_cenas = Path(prepared.task.folder_path) / f"{sufixo_rot}_Cenas.txt"
-                        caminho_txt_legenda = Path(prepared.task.folder_path) / f"{sufixo_rot}_Legenda.txt"
+                        caminho_roteiros_unificado = Path(prepared.task.folder_path) / "roteiros.txt"
+                        caminho_legendas_unificado = Path(prepared.task.folder_path) / "legendas.txt"
                         caminho_img_base_roteiro = Path(prepared.task.folder_path) / f"IMG_BASE_VALIDADA_{sufixo_rot}.png"
 
                         # --- CHECKPOINT MESTRE: SE O VÍDEO FINAL JÁ EXISTE, PULA TUDO DESSE ROTEIRO ---
@@ -442,8 +377,12 @@ def main() -> None:
                         if arquivos_1080_existentes:
                             log_success(f'🚀 CHECKPOINT FINAL ALCANÇADO: Vídeo final 1080p do {sufixo_rot} já existe ({arquivos_1080_existentes[0].name}).')
                             
-                            if caminho_txt_cenas.exists():
-                                roteiros_anteriores_textos.append(caminho_txt_cenas.read_text(encoding='utf-8'))
+                            if caminho_roteiros_unificado.exists():
+                                cont_total = caminho_roteiros_unificado.read_text(encoding='utf-8')
+                                if f"=== ROTEIRO {r_idx} ===" in cont_total:
+                                    bloco = cont_total.split(f"=== ROTEIRO {r_idx} ===")[1]
+                                    bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
+                                    roteiros_anteriores_textos.append(bloco.strip())
                             
                             vencedor_simulado = arquivos_1080_existentes[0] 
                             alt_simuladas = list(Path(prepared.task.folder_path).glob(f"{sufixo_rot}_Variante*_720p.mp4"))
@@ -532,10 +471,16 @@ def main() -> None:
                                     
                                     # 3. Avaliação no Gemini
                                     log_step("Enviando Variantes para o Diretor de Arte (Gemini) escolher a melhor...")
-                                    gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=180)
+                                    gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
                                     gemini_juri.abrir_gemini()
                                     
-                                    melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(cand_a, cand_b, nome_prod, estilo_filmagem_pasta)
+                                    # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no Júri
+                                    try:
+                                        melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(cand_a, cand_b, nome_prod, estilo_filmagem_pasta)
+                                    except Exception as e:
+                                        if "Timeout" in str(e) or "anexar" in str(e).lower():
+                                            raise Exception(f"SWITCH_ACCOUNT: Falha anexo Júri na conta {account.email}")
+                                        raise e
                                     
                                     shutil.copy2(str(melhor_img_base), str(caminho_img_base_roteiro))
                                     log_success(f'Imagem Base gerada e validada via FLOW para {sufixo_rot}: {caminho_img_base_roteiro.name}')
@@ -546,6 +491,7 @@ def main() -> None:
                                     imagem_base_flow = caminho_img_base_roteiro
                                     
                                 except Exception as e:
+                                    if "SWITCH_ACCOUNT" in str(e): raise e
                                     log_error(f"Erro no fluxo A/B de imagem FLOW/GEMINI: {e}")
                                     raise Exception(f'Falha fatal ao gerar Imagem Base para {sufixo_rot} via FLOW')
                             else:
@@ -562,18 +508,24 @@ def main() -> None:
                                 else:
                                     raise Exception(f'Falha fatal ao gerar Imagem Base para {sufixo_rot}')
 
-                        # --- CHECKPOINT: IA ROTEIRO E VALIDAÇÃO DE TAMANHO ---
+                        # --- CHECKPOINT: IA ROTEIRO (NOVO MODELO DE ARQUIVO UNIFICADO) ---
                         precisa_gerar_roteiro = True
-                        if caminho_txt_cenas.exists():
-                            conteudo_teste = caminho_txt_cenas.read_text(encoding='utf-8').strip()
+                        texto_roteiro_atual = ""
+                        
+                        if caminho_roteiros_unificado.exists():
+                            conteudo_total = caminho_roteiros_unificado.read_text(encoding='utf-8')
+                            marcador_roteiro = f"=== ROTEIRO {r_idx} ==="
                             
-                            # VALIDAÇÃO DUPLA: Tamanho mínimo E existência obrigatória da tag da cena
-                            if len(conteudo_teste) < 500 or not re.search(r'\[[Cc]ena\s*1', conteudo_teste):
-                                log_error(f'⚠️ Arquivo {caminho_txt_cenas.name} pequeno ou sem cenas válidas. Apagando para regerar...')
-                                caminho_txt_cenas.unlink(missing_ok=True)
-                            else:
-                                log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: {caminho_txt_cenas.name} já existe e possui tamanho válido.')
-                                precisa_gerar_roteiro = False
+                            if marcador_roteiro in conteudo_total:
+                                bloco = conteudo_total.split(marcador_roteiro)[1]
+                                bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
+                                
+                                if len(bloco.strip()) < 500 or not re.search(r'\[[Cc]ena\s*1', bloco):
+                                    log_error(f'⚠️ Roteiro {r_idx} pequeno ou sem cenas válidas no arquivo unificado. Regerando...')
+                                else:
+                                    log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Roteiro {r_idx} já existe em roteiros.txt.')
+                                    precisa_gerar_roteiro = False
+                                    texto_roteiro_atual = bloco.strip()
 
                         if precisa_gerar_roteiro:
                             log_step(f'ETAPA IA: Gerando {sufixo_rot} ({r_idx}/{qtd_roteiros})')
@@ -586,10 +538,8 @@ def main() -> None:
                             
                             dados_anuncio = prepared.task.dados_anuncio if hasattr(prepared.task, 'dados_anuncio') else {}
                             
-                            # --- RETRY LOCAL DE IA ---
-                            roteiro_valido = False
-                            roteiro_limpo = ""
-                            for tentativa_ia in range(1, 4):
+                            # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no Roteiro
+                            try:
                                 roteiro_bruto = gemini.treinar_e_gerar_roteiro(
                                     arquivos=arquivos_contexto,
                                     dados_produto=dados_anuncio,
@@ -598,39 +548,30 @@ def main() -> None:
                                     roteiros_anteriores=roteiros_anteriores_textos,
                                     tarefa_obj=prepared.task
                                 )
-                                
-                                if roteiro_bruto and "TIMEOUT" not in roteiro_bruto and "ERRO" not in roteiro_bruto:
-                                    roteiro_limpo = formatar_roteiro_limpo(roteiro_bruto)
-                                    if len(roteiro_limpo) >= 500:
-                                        roteiro_valido = True
-                                        break
-                                    else:
-                                        log_error(f'⚠️ Gemini gerou um texto muito curto ({len(roteiro_limpo)} chars). Re-tentando...')
-                                        time.sleep(3)
-                                else:
-                                    log_error('⚠️ Falha de comunicação com Gemini. Re-tentando...')
-                                    time.sleep(3)
-                                    
-                            if not roteiro_valido:
-                                raise Exception(f'IA falhou 3x ao gerar um texto válido para o {sufixo_rot}. Abortando.')
+                                roteiro_limpo = formatar_roteiro_limpo(roteiro_bruto)
+                            except Exception as e:
+                                if "Timeout" in str(e) or "anexar" in str(e).lower():
+                                    raise Exception(f"SWITCH_ACCOUNT: Falha anexo roteiro na conta {account.email}")
+                                raise e
 
-                            with open(caminho_txt_cenas, "w", encoding="utf-8") as f:
-                                f.write(roteiro_limpo)
-                                
-                            log_success(f'{sufixo_rot} gerado: {caminho_txt_cenas.name}')
+                            # 🚨 SALVA NO ARQUIVO UNIFICADO
+                            salvar_bloco_unificado(caminho_roteiros_unificado, f"ROTEIRO {r_idx}", roteiro_limpo)
+                            texto_roteiro_atual = roteiro_limpo
+                            log_success(f'Roteiro {r_idx} gerado e anexado ao roteiros.txt')
                             salvar_ultima_conta_env(account.email)
 
-                        texto_roteiro_atual = caminho_txt_cenas.read_text(encoding='utf-8')
-                        extrair_e_salvar_legenda(texto_roteiro_atual, caminho_txt_legenda)
+                        # Extrai a legenda e salva no arquivo unificado legendas.txt
+                        extrair_e_salvar_legenda(texto_roteiro_atual, caminho_legendas_unificado, r_idx)
                         roteiros_anteriores_textos.append(texto_roteiro_atual)
 
                         # --- CHECKPOINT: GERAÇÃO FLOW ---
                         log_step(f'ETAPA FLOW: Gerando Variantes para o {sufixo_rot}')
                         
-                        cenas = ler_e_separar_cenas(caminho_txt_cenas, qtd_cenas=qtd_cenas_anuncio)
+                        cenas = ler_e_separar_cenas(caminho_roteiros_unificado, num_roteiro=r_idx, qtd_cenas=qtd_cenas_anuncio)
+                        
                         if not cenas:
-                            log_error(f"O arquivo {caminho_txt_cenas.name} não retornou cenas válidas! Deletando lixo do Gemini...")
-                            caminho_txt_cenas.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
+                            log_error(f"O arquivo roteiros.txt não retornou cenas válidas! Deletando lixo do Gemini...")
+                            caminho_roteiros_unificado.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
                             raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
                             
                         url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
@@ -686,7 +627,13 @@ def main() -> None:
                         if len(variantes_720p_geradas) > 1:
                             gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
                             gemini_juri.abrir_gemini()
-                            video_vencedor_720 = gemini_juri.avaliar_melhor_variante_de_video(variantes_720p_geradas, texto_roteiro_atual)
+                            # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no Júri de Vídeo
+                            try:
+                                video_vencedor_720 = gemini_juri.avaliar_melhor_variante_de_video(variantes_720p_geradas, texto_roteiro_atual)
+                            except Exception as e:
+                                if "Timeout" in str(e) or "anexar" in str(e).lower():
+                                    raise Exception(f"SWITCH_ACCOUNT: Falha anexo Júri Vídeo na conta {account.email}")
+                                raise e
                                 
                         log_success(f'🎉 VARIANTE VENCEDORA {sufixo_rot.upper()}: {video_vencedor_720.name}')
 
@@ -704,9 +651,7 @@ def main() -> None:
                         # Apaga o arquivo original de 720p do vencedor para economizar espaço
                         try:
                             video_vencedor_720.unlink()
-                            log_success("Vídeo vencedor original 720p apagado para economizar espaço.")
-                        except Exception:
-                            pass
+                        except Exception: pass
                         
                         resultados_roteiros.append({
                             'vencedor_ja_1080p': video_final_1080,
@@ -722,20 +667,16 @@ def main() -> None:
                     pasta_concluido = pasta_raiz_tarefas / "concluido" / nome_pasta
                     pasta_concluido.mkdir(parents=True, exist_ok=True)
                     
-                    # Cópias específicas (Apenas Renomeia Alternativas e lida com o Vencedor Simulado)
                     for res in resultados_roteiros:
                         for alt in res['alternativas']:
                             nome_alt_limpo = alt.stem.replace('_720p', '')
                             if alt.exists():
                                 shutil.copy2(str(alt), str(pasta_concluido / f"02_Alternativa_{nome_alt_limpo}_720p.mp4"))
                         
-                    # Cópia geral (Garante que os 1080p, txt, PNGs vão tudo para lá)
                     for arquivo in pasta_pendente.iterdir():
                         if arquivo.is_file():
-                            # O vencedor em 1080p é copiado junto com os TXTs aqui
                             shutil.copy2(str(arquivo), str(pasta_concluido / arquivo.name))
                             
-                    # Limpa O CONTEÚDO da pasta pendente, MANTENDO o diretório vivo.
                     for f in pasta_pendente.iterdir():
                         if f.is_file(): 
                             f.unlink(missing_ok=True)
@@ -747,7 +688,7 @@ def main() -> None:
 
                 except Exception as exc:
                     log_error(f"Falha na execução: {str(exc)}")
-                    log_step("Iniciando próximo rodízio de conta/tentativa instantaneamente...")
+                    log_step("Encerrando driver e trocando de conta para próxima tentativa...")
                     falhas_consecutivas += 1
                     tentativa_atual += 1
 
@@ -757,12 +698,10 @@ def main() -> None:
                         driver = None
                         
             # Fim do Loop da Tarefa (sucesso_absoluto_tarefa = True)
-            # O sistema voltará naturalmente ao início do `while True` principal para procurar a próxima pasta ou dormir.
 
     except Exception as exc:
         log_error(f"Erro Crítico: {str(exc)}")
         input('Pressione ENTER para encerrar...')
-
 
 if __name__ == '__main__':
     main()

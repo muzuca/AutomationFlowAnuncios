@@ -404,7 +404,7 @@ class GoogleFlowAutomation:
             time.sleep(3.0) 
             
             inicio_upload = time.time()
-            fim_upload = inicio_upload + 180 
+            fim_upload = inicio_upload + 60 
             
             sucesso_upload = False
             ultimo_movimento = time.time()
@@ -441,9 +441,9 @@ class GoogleFlowAutomation:
             
             if not sucesso_upload:
                 self._finish_progress_inline()
-                _log(f"⚠️ Timeout: O NOVO card com o nome '{nome_arquivo}' não apareceu após 180s.")
+                _log(f"⚠️ Timeout: O NOVO card com o nome '{nome_arquivo}' não apareceu após 60s.")
                 
-                # 📸 PRINT 3 (Timeout): A tela após 180 segundos travada
+                # 📸 PRINT 3 (Timeout): A tela após 60 segundos travada
                 salvar_print_debug(self.driver, f"3_TIMEOUT_UPLOAD_{nome_limpo}")
                 return False
 
@@ -582,7 +582,7 @@ class GoogleFlowAutomation:
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
             return False
 
-    def _enviar_prompt_imagem_isolado(self, prompt: str, timeout_geracao: int = 180) -> bool:
+    def _enviar_prompt_imagem_isolado(self, prompt: str, timeout_geracao: int = 60) -> bool:
         """Digita o prompt e monitora Falhas rápidas no modal ou o botão Baixar (Modo Imagem)."""
         _log("Enviando prompt (Fluxo isolado de Imagem)...")
         prompt_linear = " ".join(prompt.split())
@@ -753,7 +753,7 @@ class GoogleFlowAutomation:
                     self._modelo_configurado = False
                     self.configurar_parametros_imagem()
                     
-                    if self._enviar_prompt_imagem_isolado(prompt, timeout_geracao=180):
+                    if self._enviar_prompt_imagem_isolado(prompt, timeout_geracao=60):
                         sucesso_absoluto = True
                         break # Sai do loop de geração!
                     else:
@@ -804,7 +804,7 @@ class GoogleFlowAutomation:
                 _log('Aguardando a conclusão do upload da imagem (sumiço do loader/%)...')
                 time.sleep(2.0) 
                 
-                fim_upload = time.time() + 180
+                fim_upload = time.time() + 60
                 while time.time() < fim_upload:
                     loaders = self.driver.find_elements(By.XPATH, "//div[contains(text(), '%')] | //span[contains(text(), '%')]")
                     if not loaders or not any(l.is_displayed() for l in loaders):
@@ -1064,7 +1064,7 @@ class GoogleFlowAutomation:
                 
         return False
     
-    def _aguardar_geracao_imagem_sem_porcentagem(self, prompt: str, timeout: int = 180) -> bool:
+    def _aguardar_geracao_imagem_sem_porcentagem(self, prompt: str, timeout: int = 60) -> bool:
         _log(f"Aguardando o card da nova imagem aparecer no feed central...")
         fim = time.time() + timeout
         ultimo_log = time.time()
@@ -1234,12 +1234,12 @@ class GoogleFlowAutomation:
                 except Exception: pass
 
             if not viu_sinal_de_vida:
-                if time.time() - ultimo_movimento > 180:
+                if time.time() - ultimo_movimento > 60:
                     if linha_progresso_ativa: self._finish_progress_inline()
-                    _log("❌ Card sem sinal de vida por 180s. Assumindo erro.")
+                    _log("❌ Card sem sinal de vida por 60s. Assumindo erro.")
                     return False
             else:
-                if time.time() - ultimo_movimento > 180:
+                if time.time() - ultimo_movimento > 60:
                     if linha_progresso_ativa: self._finish_progress_inline()
                     _log("❌ Card estagnado por muito tempo. Assumindo erro.")
                     return False
@@ -1265,7 +1265,7 @@ class GoogleFlowAutomation:
         diretorio.mkdir(parents=True, exist_ok=True)
         return {p.name for p in diretorio.glob(f"*{extensao}")}
 
-    def _esperar_download_arquivo(self, download_dir: Path, antes: set[str], extensao: str = ".mp4", timeout=180) -> Path:
+    def _esperar_download_arquivo(self, download_dir: Path, antes: set[str], extensao: str = ".mp4", timeout=60) -> Path:
         fim = time.time() + timeout
         ultimo_temp = None
         while time.time() < fim:
@@ -1367,7 +1367,7 @@ class GoogleFlowAutomation:
             
             # 2. 🕵️ MONITORAMENTO FAMINTO (Igual à sua função de imagem)
             arquivo_final = None
-            fim_timeout = time.time() + 180 # Vídeos são mais pesados, mantemos 3 min
+            fim_timeout = time.time() + 60 # Vídeos são mais pesados, mantemos 3 min
             
             while time.time() < fim_timeout:
                 arquivos_na_pasta = list(download_dir.glob("*"))
@@ -1460,7 +1460,7 @@ class GoogleFlowAutomation:
             
             # 2. 🕵️ MONITORAMENTO FAMINTO (Fiel à sua versão funcional)
             arquivo_final = None
-            fim_timeout = time.time() + 180 
+            fim_timeout = time.time() + 60 
             
             while time.time() < fim_timeout:
                 arquivos_na_pasta = list(download_dir.glob("*"))

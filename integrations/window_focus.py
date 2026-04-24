@@ -9,7 +9,6 @@ import time
 # 🚨 IMPORTAÇÕES DE LOG E UTILITÁRIOS
 from integrations.utils import is_headless, _log
 
-
 def browser_ready_for_next_step(driver) -> bool:
     """
     Verifica se o navegador está pronto para a próxima ação.
@@ -22,7 +21,6 @@ def browser_ready_for_next_step(driver) -> bool:
         return True
     except TimeoutException:
         return False
-
 
 def dismiss_chrome_native_popup(driver) -> bool:
     """
@@ -58,7 +56,6 @@ def dismiss_chrome_native_popup(driver) -> bool:
 
     # Verifica se funcionou
     return browser_ready_for_next_step(driver)
-
 
 def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_between: float = 1.0) -> bool:
     """
@@ -112,3 +109,12 @@ def dismiss_chrome_native_popup_with_retry(driver, attempts: int = 5, wait_betwe
 
     _log('Alerta pode ter persistido, mas o fluxo irá tentar prosseguir.')
     return False
+
+def fechar_popup_cromado_pos_gemini(driver) -> None:
+    _log('ETAPA 7.1: validando popup nativo do Chrome apos abrir o Gemini')
+    time.sleep(1.5)
+    popup_fechado = dismiss_chrome_native_popup_with_retry(driver)
+    if popup_fechado:
+        _log('OK: Popup nativo do Chrome validado/fechado apos abrir o Gemini')
+    else:
+        _log('ERRO: Popup nativo do Chrome permaneceu apos abrir o Gemini')

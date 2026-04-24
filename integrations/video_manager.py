@@ -31,7 +31,7 @@ def concatenar_cenas_720p(arquivos_mp4: List[Path], saida_path: Path) -> bool:
     ]
     
     try:
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180, check=True)
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=True)
         lista_path.unlink(missing_ok=True)
         return True
     except Exception as e:
