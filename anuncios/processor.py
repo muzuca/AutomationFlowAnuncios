@@ -64,71 +64,67 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
     if not base_path.exists():
         raise RuntimeError(f'Pasta base de produtos não encontrada: {base_path}')
 
-    # BUSCA RESILIENTE: Procura por todas as pastas que se chamam 'pendente' dentro do Drive
-    # Isso resolve o problema caso a estrutura de pastas tenha sido alterada acidentalmente.
-    pastas_pendentes = base_path.rglob("pendente")
+    # NOVA BUSCA: A estrutura agora é Base_Dir / Nome_Modelo / Tipo_Filme / [ID_Tarefa]
+    # Usamos glob("*/*/*") para capturar todas as pastas no nível ID_Tarefa
+    pastas_tarefa = [p for p in base_path.glob("*/*/*") if p.is_dir()]
 
-    for pending_dir in pastas_pendentes:
-        if not pending_dir.is_dir():
+    for task_dir in pastas_tarefa:
+        # Se por algum motivo ele pegar a lixeira do Windows, pastas ocultas ou resíduos de concluido, ignoramos
+        if task_dir.name.startswith('$') or task_dir.name.startswith('.') or 'concluido' in [p.lower() for p in task_dir.parts]:
             continue
 
-        # A estrutura esperada é: Base_Dir / Nome_Modelo / Tipo_Filme / pendente / [ID_Tarefa]
+        # A estrutura esperada é: Base_Dir / Nome_Modelo / Tipo_Filme / [ID_Tarefa]
         try:
-            tipo_filme_dir = pending_dir.parent
+            tipo_filme_dir = task_dir.parent
             modelo_dir = tipo_filme_dir.parent
         except Exception:
             continue # Se a hierarquia nao fizer sentido, ignora
 
-        # Varre o conteudo da pasta pendente procurando a subpasta do ID da tarefa (ex: "1", "2")
-        for task_dir in pending_dir.iterdir():
-            if not task_dir.is_dir():
-                continue
-            
-            # Identificação de Modelo e Filmagem baseada nas pastas acima
-            nome_modelo = modelo_dir.name.lower()
-            nome_filmagem = tipo_filme_dir.name.lower()
-            
-            modelo_identificada = PERFIL_PADRAO
-            for chave, perfil in PERFIS_MODELOS.items():
-                if chave in nome_modelo:
-                    modelo_identificada = perfil
-                    break
+        # Identificação de Modelo e Filmagem baseada nas pastas acima
+        nome_modelo = modelo_dir.name.lower()
+        nome_filmagem = tipo_filme_dir.name.lower()
+        
+        modelo_identificada = PERFIL_PADRAO
+        for chave, perfil in PERFIS_MODELOS.items():
+            if chave in nome_modelo:
+                modelo_identificada = perfil
+                break
 
-            filmagem_identificada = TIPOS_FILMAGEM.get("pov-maos") 
-            for chave, regras in TIPOS_FILMAGEM.items():
-                if chave in nome_filmagem:
-                    filmagem_identificada = regras
-                    break
-                    
-            descricoes_prompts = {
-                "modelo": modelo_identificada,
-                "filmagem": filmagem_identificada
-            }
+        filmagem_identificada = TIPOS_FILMAGEM.get("pov-maos") 
+        for chave, regras in TIPOS_FILMAGEM.items():
+            if chave in nome_filmagem:
+                filmagem_identificada = regras
+                break
+                
+        descricoes_prompts = {
+            "modelo": modelo_identificada,
+            "filmagem": filmagem_identificada
+        }
 
-            metadados_produto = {
-                'modelo': modelo_dir.name,
-                'tom': 'Feminino, persuasivo e comercial',
-                'duracao': '15',
-                'nome_produto': modelo_dir.name, 
-                'beneficios': 'Prático, alta qualidade e indispensável',
-                'nome': task_dir.name
-            }
+        metadados_produto = {
+            'modelo': modelo_dir.name,
+            'tom': 'Feminino, persuasivo e comercial',
+            'duracao': '15',
+            'nome_produto': modelo_dir.name, 
+            'beneficios': 'Prático, alta qualidade e indispensável',
+            'nome': task_dir.name
+        }
 
-            tarefa_bruta = AdTask(
-                task_id=task_dir.name,
-                model_name=modelo_dir.name,
-                shoot_type=tipo_filme_dir.name,
-                status='pendente',
-                folder_path=task_dir,
-                dados_anuncio=metadados_produto,
-                descricoes_prompts=descricoes_prompts
-            )
-            
-            tarefa_com_arquivos = _parse_task_assets(tarefa_bruta)
-            
-            # Condição crucial: Só adiciona à fila se houver arquivos de mídia brutos
-            if len(tarefa_com_arquivos.assets) > 0:
-                tasks.append(tarefa_com_arquivos)
+        tarefa_bruta = AdTask(
+            task_id=task_dir.name,
+            model_name=modelo_dir.name,
+            shoot_type=tipo_filme_dir.name,
+            status='pendente',
+            folder_path=task_dir,
+            dados_anuncio=metadados_produto,
+            descricoes_prompts=descricoes_prompts
+        )
+        
+        tarefa_com_arquivos = _parse_task_assets(tarefa_bruta)
+        
+        # Condição crucial: Só adiciona à fila se houver arquivos de mídia brutos
+        if len(tarefa_com_arquivos.assets) > 0:
+            tasks.append(tarefa_com_arquivos)
 
     tasks.sort(key=lambda item: (item.model_name.lower(), item.shoot_type.lower(), item.task_id))
     return tasks
@@ -146,11 +142,11 @@ def prepare_task(task: AdTask) -> PreparedTaskResult:
 
     for asset in assets:
         nome_arquivo = asset.path.name.lower()
-        if nome_arquivo.startswith('00_produto'):
+        if nome_arquivo.startswith('00_produto') or nome_arquivo.startswith('base_produto'):
             candidatos.append(asset)
-        elif nome_arquivo.startswith('01_preco'):
+        elif nome_arquivo.startswith('01_preco') or nome_arquivo.startswith('ref_preco'):
             price_asset = asset
-        elif nome_arquivo.startswith('02_referencia'):
+        elif nome_arquivo.startswith('02_referencia') or nome_arquivo.startswith('ref_extra'):
             if not reference:
                 reference = asset
 

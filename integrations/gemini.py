@@ -28,9 +28,9 @@ from anuncios.prompts import (
     PROMPT_VALIDACAO_PRODUTO,
     PROMPT_GERACAO_IMAGEM_POV,
     PROMPT_GERACAO_IMAGEM_FRONTAL,
-    PROMPT_DESCRICAO_DIRETA_CAMINHANDO,
-    PROMPT_DESCRICAO_DIRETA_FLAT,
-    PROMPT_DESCRICAO_DIRETA_PES,
+    PROMPT_GERACAO_IMAGEM_CAMINHANDO,
+    PROMPT_GERACAO_IMAGEM_FLAT,
+    PROMPT_GERACAO_IMAGEM_PES,  
     PROMPT_JURI_CANDIDATOS_IMAGEM_BASE,
     PROMPT_JURI_TESTE_AB_IMAGEM_BASE,
     PROMPT_MESTRE_ROTEIRO,
@@ -1235,14 +1235,14 @@ class GeminiAnunciosViaFlow:
                         nome_produto=nome_prod, contexto_produto=contexto_produto, desc_estilo=desc_estilo
                     )
                 elif "caminhando" in pasta_estilo:
-                    prompt_geracao = PROMPT_DESCRICAO_DIRETA_CAMINHANDO.format(nome_produto=nome_prod)
+                    prompt_geracao = PROMPT_GERACAO_IMAGEM_CAMINHANDO.format(nome_produto=nome_prod)
                 else: # pes
-                    prompt_geracao = PROMPT_DESCRICAO_DIRETA_PES.format(nome_produto=nome_prod)
+                    prompt_geracao = PROMPT_GERACAO_IMAGEM_PES.format(nome_produto=nome_prod)
             
             elif "flat" in pasta_estilo:
                 # Apenas o produto (Still giratório)
                 self.anexar_arquivo_local(foto_produto_escolhida)
-                prompt_geracao = PROMPT_DESCRICAO_DIRETA_FLAT.format(nome_produto=nome_prod)
+                prompt_geracao = PROMPT_GERACAO_IMAGEM_FLAT.format(nome_produto=nome_prod)
                 
             else:
                 # Padrão POV

@@ -68,6 +68,7 @@ def main() -> None:
                 qtd_cenas_anuncio = int(os.getenv("CENAS_POR_ANUNCIO", 3))
                 qtd_roteiros = int(os.getenv("ROTEIROS_POR_ANUNCIO", 1))
                 fonte_imagem = os.getenv("IMAGE_GENERATOR_SOURCE", "GEMINI").upper() # NOVO: GEMINI OU FLOW
+                diretorio_anuncios_raiz = Path(os.getenv("ANUNCIOS_DIR", "G:/Meu Drive/Anuncios"))
                 
                 task = get_next_pending_task(settings.products_base_dir)
             except Exception as e_watcher:
@@ -189,12 +190,12 @@ def main() -> None:
                     caminho_metadados = pasta_task / "metadados.txt"
 
                     # Trava de segurança dupla: Verifica se os arquivos de fato já foram renomeados
-                    arquivos_ja_renomeados = any(f.name.startswith("00_Produto") for f in pasta_task.iterdir() if f.is_file())
+                    arquivos_ja_renomeados = any(f.name.startswith("Base_Produto") for f in pasta_task.iterdir() if f.is_file())
 
                     if not caminho_metadados.exists() or not arquivos_ja_renomeados:
                         log_step('ETAPA IA-0: Organizando arquivos e extraindo metadados de venda')
                         # Pega apenas os arquivos crus (ignora arquivos ocultos e coisas já geradas)
-                        arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "img_base" not in f.name.lower() and "metadados" not in f.name.lower()]                        
+                        arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "ia_" not in f.name.lower() and "metadados" not in f.name.lower()]                        
 
                         if len(arquivos_brutos) >= 2:
                             # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no OCR
@@ -231,13 +232,14 @@ def main() -> None:
                                                 del mapa_arquivos[nome_real]
                                             break
 
-                                renomear_seguro('arquivo_produto', '00_Produto')
-                                renomear_seguro('arquivo_preco', '01_Preco')
-                                renomear_seguro('arquivo_referencia', '02_Referencia')
+                                renomear_seguro('arquivo_produto', 'Base_Produto')
+                                renomear_seguro('arquivo_preco', 'Ref_Preco')
+                                renomear_seguro('arquivo_referencia', 'Ref_Extra')
 
                                 # 2. Salva o TXT com a riqueza de detalhes
                                 conteudo_txt = (
                                     f"NOME_REAL: {dados_ia.get('nome_produto', 'Não lido')}\n"
+                                    f"NOME_RESUMIDO: {dados_ia.get('nome_resumido', 'ProdutoGenerico')}\n"
                                     f"PRECO_E_CONDICOES: {dados_ia.get('preco_condicoes', 'Não lido')}\n"
                                     f"BENEFICIOS_EXTRAS: {dados_ia.get('beneficios', 'Não lido')}\n"
                                 )
@@ -248,29 +250,28 @@ def main() -> None:
                             log_step("Aviso: Poucos arquivos na pasta para classificação IA. Seguindo fluxo normal...")
 
                     # 3. Injeta os dados riquíssimos do TXT direto na variável da Tarefa
+                    # 3.1. Primeiro você estabiliza qual é a tarefa definitiva e prepara os assets
+                    task = get_next_pending_task(settings.products_base_dir)
+                    prepared = prepare_task(task)
+                    log_success(describe_task(prepared.task))
+
+                    # 3.2. SÓ AGORA você injeta os dados do metadados.txt (para nada sobrescrever eles)
+                    pasta_task = Path(task.folder_path)
+                    caminho_metadados = pasta_task / "metadados.txt"
+
                     if caminho_metadados.exists():
                         txt_lines = caminho_metadados.read_text(encoding='utf-8').splitlines()
                         for line in txt_lines:
                             if line.startswith('NOME_REAL:'):
                                 task.dados_anuncio['nome_produto'] = line.replace('NOME_REAL:', '').strip()
+                            if line.startswith('NOME_RESUMIDO:'):
+                                task.dados_anuncio['nome_resumido'] = line.replace('NOME_RESUMIDO:', '').strip()
                             if line.startswith('PRECO_E_CONDICOES:'):
                                 task.dados_anuncio['preco'] = line.replace('PRECO_E_CONDICOES:', '').strip()
                             if line.startswith('BENEFICIOS_EXTRAS:'):
                                 task.dados_anuncio['beneficios_extras'] = line.replace('BENEFICIOS_EXTRAS:', '').strip()
-
-                    # =====================================================================
-                    # PREPARAÇÃO DA TAREFA E EXTRAÇÃO DE VARIÁVEIS (PÓS-LIMPEZA)
-                    # =====================================================================
-                    # Reconstrói a task para ela ler a pasta com os nomes NOVOS que a IA acabou de gerar
-                    task = get_next_pending_task(settings.products_base_dir)
-                    prepared = prepare_task(task)
-                    log_success(describe_task(prepared.task))
-
-                    # Se a IA já renomeou para "00_Produto", nós pegamos ele primeiro.
-                    # Se não, usamos a lógica padrão do prepared
-                    pasta_task = Path(task.folder_path)
                     
-                    arquivos_produto = list(pasta_task.glob("00_Produto*"))
+                    arquivos_produto = list(pasta_task.glob("Base_Produto*"))
                     if arquivos_produto:
                         primeira_imagem = arquivos_produto[0]
                     elif prepared.candidate_product_assets:
@@ -278,8 +279,8 @@ def main() -> None:
                     else:
                         raise Exception('Nenhum candidato de imagem de produto encontrado na tarefa')
                     
-                    arquivo_ref = list(pasta_task.glob("02_Referencia*"))[0] if list(pasta_task.glob("02_Referencia*")) else prepared.reference_asset.path if prepared.reference_asset else None
-                    arquivo_preco = list(pasta_task.glob("01_Preco*"))[0] if list(pasta_task.glob("01_Preco*")) else prepared.price_asset.path if prepared.price_asset else None
+                    arquivo_ref = list(pasta_task.glob("Ref_Extra*"))[0] if list(pasta_task.glob("Ref_Extra*")) else prepared.reference_asset.path if prepared.reference_asset else None
+                    arquivo_preco = list(pasta_task.glob("Ref_Preco*"))[0] if list(pasta_task.glob("Ref_Preco*")) else prepared.price_asset.path if prepared.price_asset else None
 
                     if arquivo_preco:
                         log_success(f'Arquivo de preco mapeado: {arquivo_preco.name}')
@@ -288,7 +289,7 @@ def main() -> None:
 
                     # --- IDENTIFICAÇÃO DO TIPO DE PASTA ---
                     partes_caminho_task = Path(prepared.task.folder_path).parts
-                    estilo_filmagem_pasta = partes_caminho_task[-3] if len(partes_caminho_task) >= 3 else ""
+                    estilo_filmagem_pasta = partes_caminho_task[-2] if len(partes_caminho_task) >= 2 else ""
 
                     # --- CHECKPOINT INTELIGENTE: EXISTE AO MENOS UM ROTEIRO? (Atualizado para roteiros.txt) ---
                     tem_roteiro_pronto = False
@@ -306,9 +307,9 @@ def main() -> None:
                         precisa_abrir_gemini = False
                         
                         # Define a imagem base para o Flow (usa a ImgBase do Roteiro 1 ou o padrão)
-                        imagem_base_flow = Path(task.folder_path) / "IMG_BASE_VALIDADA_Roteiro1.png"
+                        imagem_base_flow = Path(task.folder_path) / "IA_Roteiro1.png"
                         if not imagem_base_flow.exists():
-                            imagem_base_flow = Path(task.folder_path) / "IMG_BASE_VALIDADA.png"
+                            imagem_base_flow = Path(task.folder_path) / "IA_Base.png"
                     else:
                         precisa_abrir_gemini = True
 
@@ -339,15 +340,25 @@ def main() -> None:
                             log_step("🛑 Tarefa abortada por rejeição de imagem. Movendo para 'concluido' como REPROVADO.")
                             
                             try:
-                                pasta_raiz_tarefas = pasta_task.parent.parent # Volta de 'pendente' para a raiz do modelo
-                                pasta_concluido_base = pasta_raiz_tarefas / "concluido"
-                                pasta_concluido_base.mkdir(parents=True, exist_ok=True)
+                                nome_prod_raw = task.dados_anuncio.get('nome_resumido') or task.dados_anuncio.get('nome_produto') or f"Produto_{id_original}"
+                                nome_prod_slug = re.sub(r'[^\w]', '', nome_prod_raw).title()
                                 
-                                nova_pasta_reprovada = pasta_concluido_base / f"{pasta_task.name}_REPROVADO"
+                                partes_origem = pasta_task.parts
+                                estilo_ref = re.sub(r'[^\w]', '', partes_origem[-2]) if len(partes_origem) >= 2 else "Estilo" 
+                                modelo_ref = partes_origem[-3] if len(partes_origem) >= 3 else "Modelo"
+                                id_original = str(partes_origem[-1])
                                 
-                                # Move a pasta inteira de pendente para concluido renomeando-a
-                                shutil.move(str(pasta_task), str(nova_pasta_reprovada))
-                                log_success(f"Tarefa arquivada com sucesso em: {nova_pasta_reprovada}")
+                                nome_pasta_reprovada = f"{modelo_ref}_{estilo_ref}_{nome_prod_slug}_{id_original}_REPROVADO"
+                                destino_reprovado = diretorio_anuncios_raiz / nome_pasta_reprovada
+                                destino_reprovado.mkdir(parents=True, exist_ok=True)
+                                
+                                # Esvazia a pasta original e move pra reprovados
+                                for arquivo in pasta_task.iterdir():
+                                    if arquivo.is_file():
+                                        shutil.copy2(str(arquivo), str(destino_reprovado / arquivo.name))
+                                        arquivo.unlink(missing_ok=True)
+                                        
+                                log_success(f"Tarefa arquivada com sucesso em: {destino_reprovado}")
                             except Exception as e:
                                 log_error(f"Aviso: Não foi possível mover a pasta reprovada: {e}")
 
@@ -361,21 +372,35 @@ def main() -> None:
                         log_success("🚀 Fluxo de Checkpoint: Ignorando Etapas Gemini.")
 
                     # =========================================================================
+                    # 🚀 DEFINIÇÃO DO DIRETÓRIO DE ENTREGA (SÓ CRIARÁ A PASTA NO FINAL)
+                    # =========================================================================
+                    nome_resumido = task.dados_anuncio.get('nome_resumido', 'ProdutoGenerico')
+                    nome_prod_slug = re.sub(r'[^\w]', '', nome_resumido).title()
+                    
+                    partes_origem = pasta_task.parts
+                    estilo_ref = re.sub(r'[^\w]', '', partes_origem[-2]) if len(partes_origem) >= 2 else "Estilo" 
+                    modelo_ref = partes_origem[-3] if len(partes_origem) >= 3 else "Modelo"
+                    id_original = str(partes_origem[-1])
+                    
+                    nome_pasta_final = f"{modelo_ref}_{estilo_ref}_{nome_prod_slug}_{id_original}"
+                    pasta_entrega = diretorio_anuncios_raiz / nome_pasta_final
+                    log_step(f"📂 Diretório de entrega mapeado para o final do processo: {pasta_entrega.name}")
+
+                    roteiros_anteriores_textos = []
+
+                    # =========================================================================
                     # LOOP DE TESTE A/B (MÚLTIPLOS ROTEIROS) E GERAÇÃO DO FLOW
                     # =========================================================================
-                    roteiros_anteriores_textos = []
-                    resultados_roteiros = []
-
                     for r_idx in range(1, qtd_roteiros + 1):
                         sufixo_rot = f"Roteiro{r_idx}"
-                        caminho_roteiros_unificado = Path(prepared.task.folder_path) / "roteiros.txt"
-                        caminho_legendas_unificado = Path(prepared.task.folder_path) / "legendas.txt"
-                        caminho_img_base_roteiro = Path(prepared.task.folder_path) / f"IMG_BASE_VALIDADA_{sufixo_rot}.png"
+                        caminho_roteiros_unificado = Path(task.folder_path) / "roteiros.txt"
+                        caminho_legendas_unificado = Path(task.folder_path) / "legendas.txt"
+                        caminho_img_base_roteiro = Path(task.folder_path) / f"IA_{sufixo_rot}.png"
 
-                        # --- CHECKPOINT MESTRE: SE O VÍDEO FINAL JÁ EXISTE, PULA TUDO DESSE ROTEIRO ---
-                        arquivos_1080_existentes = list(Path(prepared.task.folder_path).glob(f"01_Escolhido_{sufixo_rot}_Variante*_1080p.mp4"))
+                        # --- CHECKPOINT MESTRE: SE O VÍDEO FINAL JÁ EXISTE NA ENTREGA, PULA TUDO DESSE ROTEIRO ---
+                        arquivos_1080_existentes = list(pasta_entrega.glob(f"Video_R{r_idx}v*.mp4"))
                         if arquivos_1080_existentes:
-                            log_success(f'🚀 CHECKPOINT FINAL ALCANÇADO: Vídeo final 1080p do {sufixo_rot} já existe ({arquivos_1080_existentes[0].name}).')
+                            log_success(f'🚀 CHECKPOINT FINAL ALCANÇADO: Vídeo(s) do {sufixo_rot} já existem em {pasta_entrega.name}.')
                             
                             if caminho_roteiros_unificado.exists():
                                 cont_total = caminho_roteiros_unificado.read_text(encoding='utf-8')
@@ -384,14 +409,7 @@ def main() -> None:
                                     bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
                                     roteiros_anteriores_textos.append(bloco.strip())
                             
-                            vencedor_simulado = arquivos_1080_existentes[0] 
-                            alt_simuladas = list(Path(prepared.task.folder_path).glob(f"{sufixo_rot}_Variante*_720p.mp4"))
-                            
-                            resultados_roteiros.append({
-                                'vencedor_ja_1080p': vencedor_simulado, 
-                                'alternativas': alt_simuladas
-                            })
-                            continue  # Vai direto para o próximo r_idx (Roteiro2)
+                            continue 
 
                         # --- CHECKPOINT IMAGEM BASE INDIVIDUAL POR ROTEIRO ---
                         imagem_base_flow = None
@@ -399,15 +417,15 @@ def main() -> None:
                             log_success(f'🚀 CHECKPOINT IMAGEM BASE ALCANÇADO: {caminho_img_base_roteiro.name} já existe.')
                             imagem_base_flow = caminho_img_base_roteiro
                         else:
+                            log_step(f'Gerando Imagem Base para {sufixo_rot}...')
                             if fonte_imagem == "FLOW":
-                                log_step(f'ETAPA FLOW-IMG: Gerando Imagem Base para {sufixo_rot} via FLOW (A/B Test)...')
                                 url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
                                 flow_bot_img = GoogleFlowAutomation(driver, url_flow=url_flw)
                                 
                                 # --- BUSCA DE IDENTIDADE (MODELO) VIA .ENV ---
                                 path_task = Path(prepared.task.folder_path)
                                 # Sobe níveis para achar o nome da pasta pai (Ex: LaraSelect)
-                                nome_identidade = path_task.parents[2].name 
+                                nome_identidade = task.model_name
                                 
                                 # Tenta achar o arquivo na pasta configurada no .env
                                 foto_modelo = Path(settings.modelos_dir) / f"{nome_identidade}.png"
@@ -503,8 +521,9 @@ def main() -> None:
                                     numero_roteiro=r_idx
                                 )
                                 if nova_img_base:
-                                    log_success(f'Imagem Base validada pelo Júri para {sufixo_rot}: {nova_img_base.name}')
-                                    imagem_base_flow = nova_img_base
+                                    nova_img_base.rename(caminho_img_base_roteiro)
+                                    log_success(f'Imagem Base validada pelo Júri para {sufixo_rot}: {caminho_img_base_roteiro.name}')
+                                    imagem_base_flow = caminho_img_base_roteiro
                                 else:
                                     raise Exception(f'Falha fatal ao gerar Imagem Base para {sufixo_rot}')
 
@@ -528,7 +547,7 @@ def main() -> None:
                                     texto_roteiro_atual = bloco.strip()
 
                         if precisa_gerar_roteiro:
-                            log_step(f'ETAPA IA: Gerando {sufixo_rot} ({r_idx}/{qtd_roteiros})')
+                            log_step(f'ETAPA IA: Gerando roteiro para {sufixo_rot} ({r_idx}/{qtd_roteiros})...')
                             
                             arquivos_contexto = [imagem_base_flow]
                             if arquivo_preco:
@@ -564,8 +583,8 @@ def main() -> None:
                         extrair_e_salvar_legenda(texto_roteiro_atual, caminho_legendas_unificado, r_idx)
                         roteiros_anteriores_textos.append(texto_roteiro_atual)
 
-                        # --- CHECKPOINT: GERAÇÃO FLOW ---
-                        log_step(f'ETAPA FLOW: Gerando Variantes para o {sufixo_rot}')
+                        # --- ETAPA FLOW: GERAÇÃO DE VARIANTES ---
+                        log_step(f'ETAPA FLOW: Gerando {qtd_variantes} Variantes para {sufixo_rot}')
                         
                         cenas = ler_e_separar_cenas(caminho_roteiros_unificado, num_roteiro=r_idx, qtd_cenas=qtd_cenas_anuncio)
                         
@@ -575,13 +594,15 @@ def main() -> None:
                             raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
                             
                         url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
-                        variantes_720p_geradas = []
                         
                         for v_idx in range(1, qtd_variantes + 1):
-                            caminho_var_720p = Path(prepared.task.folder_path) / f"{sufixo_rot}_Variante{v_idx}_720p.mp4"
-                            if caminho_var_720p.exists():
-                                log_success(f'🚀 CHECKPOINT VARIANTE: {caminho_var_720p.name} já existe!')
-                                variantes_720p_geradas.append(caminho_var_720p)
+                            nome_video_final = f"Video_R{r_idx}v{v_idx}.mp4"
+                            # Salva LOCALMENTE primeiro na pasta de origem
+                            caminho_final_1080 = Path(task.folder_path) / nome_video_final
+                            
+                            # Verifica se já está na pasta de entrega ou localmente
+                            if (pasta_entrega / nome_video_final).exists() or caminho_final_1080.exists():
+                                log_success(f'🚀 CHECKPOINT VARIANTE: {nome_video_final} já existe!')
                                 continue
 
                             driver.get("about:blank")
@@ -602,7 +623,7 @@ def main() -> None:
                                 sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
                                 
                                 if sucesso_geracao:
-                                    caminho_video = Path(prepared.task.folder_path) / f"{sufixo_rot}_Variante{v_idx}_Cena{c_idx}.mp4"
+                                    caminho_video = Path(task.folder_path) / f"temp_R{r_idx}v{v_idx}c{c_idx}.mp4"
                                     if flow_bot.baixar_video_gerado(caminho_video):
                                         videos_cenas_parciais.append(caminho_video)
                                     else:
@@ -611,80 +632,36 @@ def main() -> None:
                                     raise Exception(f'Falha gerar Cena {c_idx} no Flow.')
 
                             if len(videos_cenas_parciais) == len(cenas):
-                                if concatenar_cenas_720p(videos_cenas_parciais, caminho_var_720p):
-                                    variantes_720p_geradas.append(caminho_var_720p)
-                                    limpar_arquivos_temporarios(videos_cenas_parciais)
+                                var_720_temp = Path(task.folder_path) / f"temp_concat_R{r_idx}V{v_idx}.mp4"
+                                if concatenar_cenas_720p(videos_cenas_parciais, var_720_temp):
+                                    
+                                    # 🚀 CONVERSÃO OBRIGATÓRIA PARA 1080P DE TODAS AS VARIANTES (SEM JÚRI)
+                                    log_step(f"Realizando upscale local para 1080p: {nome_video_final}")
+                                    if converter_para_1080p(var_720_temp, caminho_final_1080):
+                                        log_success(f"✅ Vídeo convertido localmente: {nome_video_final}")
+                                    else:
+                                        log_error(f"Erro FFmpeg upscale. Copiando original 720p...")
+                                        shutil.copy2(str(var_720_temp), str(caminho_final_1080.with_name(f"Video_R{r_idx}v{v_idx}_720p.mp4")))
+                                        
+                                    limpar_arquivos_temporarios(videos_cenas_parciais + [var_720_temp])
                                 else:
                                     raise Exception("Falha ao concatenar cenas.")
 
-                        if not variantes_720p_geradas:
-                            raise Exception(f"Nenhuma variante gerada para {sufixo_rot}.")
-
-                        # --- JÚRI IA ---
-                        log_step(f'ETAPA JÚRI: Avaliação do Diretor de Arte (IA) - {sufixo_rot}')
-                        video_vencedor_720 = variantes_720p_geradas[0]
-                        
-                        if len(variantes_720p_geradas) > 1:
-                            gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
-                            gemini_juri.abrir_gemini()
-                            # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no Júri de Vídeo
-                            try:
-                                video_vencedor_720 = gemini_juri.avaliar_melhor_variante_de_video(variantes_720p_geradas, texto_roteiro_atual)
-                            except Exception as e:
-                                if "Timeout" in str(e) or "anexar" in str(e).lower():
-                                    raise Exception(f"SWITCH_ACCOUNT: Falha anexo Júri Vídeo na conta {account.email}")
-                                raise e
-                                
-                        log_success(f'🎉 VARIANTE VENCEDORA {sufixo_rot.upper()}: {video_vencedor_720.name}')
-
-                        # --- ETAPA FINAL E LIMPEZA DE ESPAÇO ---
-                        log_step(f'ETAPA FINAL: Upscale 1080p - {sufixo_rot}')
-                        nome_base_vencedor = video_vencedor_720.stem.replace("_720p", "")
-                        video_final_1080 = Path(prepared.task.folder_path) / f"01_Escolhido_{nome_base_vencedor}_1080p.mp4"
-                        
-                        sucesso_upscale = converter_para_1080p(video_vencedor_720, video_final_1080)
-                        if not sucesso_upscale or not video_final_1080.exists():
-                            raise Exception(f"Erro FFmpeg upscale {sufixo_rot}.")
-                        
-                        log_success(f"✔ Upscale concluído: {video_final_1080.name}")
-                        
-                        # Apaga o arquivo original de 720p do vencedor para economizar espaço
-                        try:
-                            video_vencedor_720.unlink()
-                        except Exception: pass
-                        
-                        resultados_roteiros.append({
-                            'vencedor_ja_1080p': video_final_1080,
-                            'alternativas': [v for v in variantes_720p_geradas if v != video_vencedor_720]
-                        })
-
                     # =========================================================================
-                    # ORGANIZAÇÃO FINAL (Mover para Concluído)
+                    # 🚀 ENTREGA FINAL: MOVE TUDO PARA A PASTA DE ANUNCIOS E LIMPA A ORIGEM
                     # =========================================================================
-                    pasta_pendente = Path(prepared.task.folder_path)
-                    pasta_raiz_tarefas = pasta_pendente.parent.parent
-                    nome_pasta = pasta_pendente.name
-                    pasta_concluido = pasta_raiz_tarefas / "concluido" / nome_pasta
-                    pasta_concluido.mkdir(parents=True, exist_ok=True)
+                    log_step(f"🏆 Concluído! Movendo todos os arquivos gerados para: {pasta_entrega.name}")
+                    pasta_entrega.mkdir(parents=True, exist_ok=True)
                     
-                    for res in resultados_roteiros:
-                        for alt in res['alternativas']:
-                            nome_alt_limpo = alt.stem.replace('_720p', '')
-                            if alt.exists():
-                                shutil.copy2(str(alt), str(pasta_concluido / f"02_Alternativa_{nome_alt_limpo}_720p.mp4"))
-                        
-                    for arquivo in pasta_pendente.iterdir():
-                        if arquivo.is_file():
-                            shutil.copy2(str(arquivo), str(pasta_concluido / arquivo.name))
-                            
-                    for f in pasta_pendente.iterdir():
-                        if f.is_file(): 
-                            f.unlink(missing_ok=True)
+                    for item_final in Path(prepared.task.folder_path).iterdir():
+                        if item_final.is_file():
+                            shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
+                            item_final.unlink(missing_ok=True)
                     
-                    log_success(f'Conteúdo da pasta {nome_pasta} movido para concluído. O diretório original ficou preservado e vazio.')
+                    log_success(f'TAREFA CONCLUÍDA! O diretório de origem ficou vazio.')
                     
                     salvar_ultima_conta_env(account.email)
-                    sucesso_absoluto_tarefa = True 
+                    sucesso_absoluto_tarefa = True
 
                 except Exception as exc:
                     log_error(f"Falha na execução: {str(exc)}")
