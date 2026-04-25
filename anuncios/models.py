@@ -61,23 +61,28 @@ PERFIL_PADRAO: Dict[str, str] = {
 TIPOS_FILMAGEM: Dict[str, Dict[str, str]] = {
     "pov-maos": {
         "nome": "POV (Ponto de Vista - Mãos)",
-        "regras": "Câmera em 1ª pessoa (POV), mostrando estritamente DUAS MÃOS da modelo interagindo de forma tátil e próxima com o produto. O fundo deve estar em desfoque (bokeh). O foco é o toque, a textura e o uso."
+        "regras": "Câmera em 1ª pessoa (POV), mostrando estritamente DUAS MÃOS da modelo interagindo de forma tátil e próxima com o produto. O fundo deve estar em desfoque (bokeh). O foco é o toque, a textura e o uso.",
+        "estilo_visual": "lifestyle premium, iluminação suave e aconchegante, profundidade de campo rasa"
     },
     "modelocaminhando": {
         "nome": "Modelo Caminhando",
-        "regras": "Vídeo em plano médio ou corpo inteiro, mostrando a modelo a caminhar em direção à câmera ou lateralmente. O produto deve estar em uso natural. Enquadramento dinâmico focado no movimento."
+        "regras": "Vídeo em plano médio ou corpo inteiro, mostrando a modelo a caminhar em direção à câmera ou lateralmente. O produto deve estar em uso natural. Enquadramento dinâmico focado no movimento.",
+        "estilo_visual": "urbano fashion, iluminação natural de fim de tarde (golden hour), dinâmica e vibrante"
     },
     "modelofrontal": {
         "nome": "Modelo Frontal (Média)",
-        "regras": "Enquadramento em plano médio (da cintura para cima). A modelo está de frente ou ligeiramente de perfil, interagindo com o produto de forma natural e premium."
+        "regras": "Enquadramento em plano médio (da cintura para cima). A modelo está de frente ou ligeiramente de perfil, interagindo com o produto de forma natural e premium.",
+        "estilo_visual": "estúdio profissional, iluminação clean e nítida, estética de catálogo high-end"
     },
     "modelopés": {
         "nome": "Modelo (Foco nos Pés)",
-        "regras": "Enquadramento em plano fechado (close-up) focado estritamente nos pés da modelo. Mostre o produto (calçado) em uso sobre uma superfície (calçada, tapete). Foco total no detalhe."
+        "regras": "Enquadramento em plano fechado (close-up) focado estritamente nos pés da modelo. Mostre o produto (calçado) em uso sobre uma superfície (calçada, tapete). Foco total no detalhe.",
+        "estilo_visual": "foco macro, texturas nítidas, iluminação lateral para destacar o design do calçado"
     },
     "produtoflat": {
         "nome": "Produto Flat (Flat Lay)",
-        "regras": "NÃO use a modelo neste vídeo. Enquadramento overhead (ângulo de 90 graus de cima para baixo). O produto e acessórios estão organizados de forma plana sobre uma superfície neutra e estética. Sem movimento humano."
+        "regras": "NÃO use a modelo neste vídeo. Enquadramento overhead (ângulo de 90 graus de cima para baixo). O produto e acessórios estão organizados de forma plana sobre uma superfície neutra e estética. Sem movimento humano.",
+        "estilo_visual": "minimalista, sombras suaves, organização simétrica e estética (Pinterest style)"
     }
 }
 

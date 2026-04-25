@@ -26,7 +26,7 @@ from integrations.google_login import login_google, open_gemini
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry, fechar_popup_cromado_pos_gemini
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
-from anuncios.prompts import PROMPT_DESCRICAO_DIRETA_FRONTAL, PROMPT_DESCRICAO_DIRETA_POV, PROMPT_DESCRICAO_DIRETA_CAMINHANDO, PROMPT_DESCRICAO_DIRETA_PES, PROMPT_DESCRICAO_DIRETA_FLAT
+from anuncios.prompts import PROMPT_GERACAO_IMAGEM_CAMINHANDO, PROMPT_GERACAO_IMAGEM_FLAT, PROMPT_GERACAO_IMAGEM_FRONTAL, PROMPT_GERACAO_IMAGEM_PES, PROMPT_GERACAO_IMAGEM_POV
 # 🚨 IMPORTAÇÕES DE UTILS PADRONIZADAS
 from integrations.utils import (
     setup_logging,
@@ -437,26 +437,53 @@ def main() -> None:
                                     log_success(f"Modelo identificado via .env: {foto_modelo.name}")
                                 # ---------------------------------------------
 
+                                # --- PREPARAÇÃO DOS DADOS PARA OS NOVOS PROMPTS ---
                                 dados_anuncio = prepared.task.dados_anuncio
                                 nome_prod = dados_anuncio.get('nome_produto', 'produto')
-                                
+
+                                # Busca os dicionários que o processor carregou
                                 descricoes = getattr(prepared.task, 'descricoes_prompts', {})
                                 perfil_modelo = descricoes.get('modelo', {})
-                                desc_maos = perfil_modelo.get('maos', 'mãos femininas delicadas')
+                                perfil_filmagem = descricoes.get('filmagem', {})
+
+                                # 1. desc_maos (Vem do perfil da modelo no processor)
+                                desc_maos = perfil_modelo.get('maos', 'mãos femininas delicadas, unhas bem cuidadas')
+
+                                # 2. desc_estilo (Vem das regras de filmagem ou fallback premium)
+                                desc_estilo = perfil_filmagem.get('estilo_visual', 'lifestyle premium, cinematográfico, alta nitidez')
+
+                                # 3. contexto_produto (Vem dos benefícios do produto ou fallback de cenário)
+                                contexto_produto = dados_anuncio.get('beneficios', 'ambiente elegante e moderno condizente com o produto')
 
                                 # --- SELETOR DINÂMICO DE PROMPT POR CATEGORIA ---
                                 pasta_estilo = estilo_filmagem_pasta.lower()
-                                
+
                                 if "frontal" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_FRONTAL.format(nome_produto=nome_prod)
+                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_FRONTAL.format(
+                                        nome_produto=nome_prod,
+                                        contexto_produto=contexto_produto,
+                                        desc_estilo=desc_estilo
+                                    )
                                 elif "caminhando" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_CAMINHANDO.format(nome_produto=nome_prod)
+                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_CAMINHANDO.format(
+                                        nome_produto=nome_prod,
+                                        desc_estilo=desc_estilo
+                                    )
                                 elif "pes" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_PES.format(nome_produto=nome_prod)
+                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_PES.format(
+                                        nome_produto=nome_prod,
+                                        contexto_produto=contexto_produto,
+                                        desc_estilo=desc_estilo
+                                    )
                                 elif "flat" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_FLAT.format(nome_produto=nome_prod)
+                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_FLAT.format(
+                                        nome_produto=nome_prod,
+                                        contexto_produto=contexto_produto,
+                                        desc_estilo=desc_estilo
+                                    )
                                 else:
-                                    prompt_img_base_flow = PROMPT_DESCRICAO_DIRETA_POV.format(
+                                    # PROMPT_GERACAO_IMAGEM_POV pede nome_produto e desc_maos
+                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_POV.format(
                                         nome_produto=nome_prod,
                                         desc_maos=desc_maos
                                     )

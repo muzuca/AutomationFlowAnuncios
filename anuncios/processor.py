@@ -101,13 +101,16 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
             "filmagem": filmagem_identificada
         }
 
+        # Melhore este bloco para evitar confusão de nomes
         metadados_produto = {
-            'modelo': modelo_dir.name,
+            'modelo_identidade': modelo_dir.name, # Nome da pasta LaraSelect
             'tom': 'Feminino, persuasivo e comercial',
             'duracao': '15',
-            'nome_produto': modelo_dir.name, 
-            'beneficios': 'Prático, alta qualidade e indispensável',
-            'nome': task_dir.name
+            'nome_produto': '', # Deixe vazio para o Gemini/TXT preencher
+            'nome_resumido': '', 
+            'contexto': '',     # Deixe vazio para o Gemini/TXT preencher
+            'beneficios': '',   # Deixe vazio para o Gemini/TXT preencher
+            'nome_pasta_id': task_dir.name
         }
 
         tarefa_bruta = AdTask(
