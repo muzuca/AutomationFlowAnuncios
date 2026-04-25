@@ -285,13 +285,14 @@ Imagem 2: Referência da MODELO (identidade visual).
 
 Sua tarefa é criar uma nova imagem ultra-realista vertical 9:16 para anúncio.
 
-1. REGRA DE IDENTIDADE E SEPARAÇÃO (CRÍTICA):
+1. REGRA DE IDENTIDADE E SUBSTITUIÇÃO (CRÍTICA):
 - A modelo final deve ter o rosto, cabelo, tom de pele e biotipo EXATAMENTE iguais aos da Imagem 2.
 - NUNCA funda os rostos ou corpos das duas imagens. Apenas extraia o PRODUTO da Imagem 1.
+- IGNORE COMPLETAMENTE A ROUPA DA IMAGEM 2. É estritamente proibido que a modelo use a roupa da sua foto de referência. Você deve obrigatoriamente "vesti-la" para a nova cena.
 
 2. LÓGICA DINÂMICA DE DEMONSTRAÇÃO (Action Rules - PAY ATTENTION):
 Analise o produto "{nome_produto}":
-- Se for VESTUÁRIO (roupa): A modelo DEVE VESTIR o produto no corpo (WEARING THE CLOTHES). É ESTRITAMENTE PROIBIDO segurar roupas nas mãos (DO NOT HOLD IN HANDS).
+- Se for VESTUÁRIO (roupa): A modelo DEVE VESTIR o produto no corpo (WEARING THE CLOTHES), substituindo a roupa antiga. É ESTRITAMENTE PROIBIDO segurar roupas nas mãos (DO NOT HOLD IN HANDS).
 - Se for BOLSA ou ACESSÓRIO: A modelo deve demonstrá-lo à frente do corpo.
 - Se for CALÇADO: A modelo deve segurá-lo nas mãos.
 - Se for OUTRO OBJETO: A modelo deve segurá-lo de forma natural.
@@ -299,10 +300,10 @@ Analise o produto "{nome_produto}":
 
 3. DIREÇÃO DE ARTE:
 - Cenário: Fundo coerente com "{contexto_produto}". Estilo visual "{desc_estilo}".
-- Figurino Adaptável: Se o produto NÃO for roupa, VISTA a modelo com roupas adequadas ao cenário.
+- Figurino Adaptável: Se o produto NÃO for roupa, VISTA a modelo com roupas adequadas ao cenário, NUNCA usando a roupa original da Imagem 2.
 
 4. ERROS ABSOLUTAMENTE PROIBIDOS (Apply strictly as Negative Prompt):
-"holding clothes in hands, fused faces, morphed identity, different face from reference, deformed product, rotated product, hands covering product, third hand, extra limbs, floating arms, text, watermarks, prices."
+"wearing clothes from model reference, keeping original outfit, holding clothes in hands, fused faces, morphed identity, different face from reference, deformed product, rotated product, hands covering product, third hand, extra limbs, floating arms, text, watermarks, prices."
 
 Responda apenas gerando a imagem.
 """
@@ -315,21 +316,23 @@ Imagem 2: Referência da MODELO (identidade visual).
 
 Sua tarefa é criar uma nova imagem ultra-realista vertical 9:16 para anúncio.
 
-1. REGRA DE IDENTIDADE E SEPARAÇÃO (CRÍTICA):
+1. REGRA DE IDENTIDADE E SUBSTITUIÇÃO (CRÍTICA):
 - Rosto, cabelo e biotipo devem ser EXATOS aos da Imagem 2. Nenhuma fusão.
+- IGNORE COMPLETAMENTE A ROUPA DA IMAGEM 2. O look original da modelo deve ser descartado.
 
 2. LÓGICA DINÂMICA DE AÇÃO (Walking Pose):
 A modelo está em corpo inteiro caminhando em direção à câmera.
-- Se for VESTUÁRIO: Ela DEVE VESTIR a peça no corpo (WEARING IT). NUNCA segurar nas mãos.
+- Se for VESTUÁRIO: Ela DEVE VESTIR a peça no corpo (WEARING IT), substituindo qualquer outra roupa. NUNCA segurar nas mãos.
 - Se for BOLSA/ACESSÓRIO: Ela carrega naturalmente durante a caminhada.
 - Se for CALÇADO: Ela DEVE ESTAR CALÇANDO o produto nos pés.
 *O produto deve manter o design e cor da Imagem 1.*
 
 3. DIREÇÃO DE ARTE:
 - Cenário: Ambiente urbano moderno/luxuoso, iluminação de fim de tarde. Estilo "{desc_estilo}".
+- Figurino Adaptável: Se o produto NÃO for roupa, crie um novo look urbano elegante que complemente a cena. NUNCA use a roupa original da Imagem 2.
 
 4. ERROS ABSOLUTAMENTE PROIBIDOS (Apply strictly as Negative Prompt):
-"holding clothes in hands, holding shoes in hands, fused faces, morphed identity, deformed product, third leg, extra limbs, deformed walking gait, floating limbs, text, watermarks."
+"wearing clothes from model reference, keeping original outfit, holding clothes in hands, holding shoes in hands, fused faces, morphed identity, deformed product, third leg, extra limbs, deformed walking gait, floating limbs, text, watermarks."
 
 Responda apenas gerando a imagem.
 """
