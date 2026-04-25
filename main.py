@@ -647,16 +647,23 @@ def main() -> None:
                                 if imagem_base_flow:
                                     flow_bot.anexar_imagem(imagem_base_flow)
                                 
+                                # No loop das cenas no main.py:
                                 sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
-                                
+
                                 if sucesso_geracao:
                                     caminho_video = Path(task.folder_path) / f"temp_R{r_idx}v{v_idx}c{c_idx}.mp4"
                                     if flow_bot.baixar_video_gerado(caminho_video):
                                         videos_cenas_parciais.append(caminho_video)
                                     else:
+                                        # Se falhou o download mas não foi erro visual, tenta de novo normalmente
                                         raise Exception(f'Falha download Cena {c_idx}')
                                 else:
-                                    raise Exception(f'Falha gerar Cena {c_idx} no Flow.')
+                                    # SE CAIR AQUI: Significa que enviar_prompt_e_aguardar retornou FALSE
+                                    # (Ou por erro visual detectado pela sua função nova, ou por timeout)
+                                    log_error(f"❌ Falha crítica de geração na conta {account.email}. Trocando de conta...")
+                                    
+                                    # Este raise força o driver a fechar e o sistema a pegar o próximo e-mail da lista
+                                    raise Exception(f'SWITCH_ACCOUNT: Falha visual ou timeout no Flow - Cena {c_idx}')
 
                             if len(videos_cenas_parciais) == len(cenas):
                                 var_720_temp = Path(task.folder_path) / f"temp_concat_R{r_idx}V{v_idx}.mp4"

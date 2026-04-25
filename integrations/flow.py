@@ -1030,6 +1030,7 @@ class GoogleFlowAutomation:
                 try:
                     btn_submit = self.driver.find_element(By.XPATH, xpath_submit)
                     if btn_submit.is_displayed():
+                        self.momento_ultimo_submit = time.time()
                         js_click(self.driver, btn_submit)
                         _log("✔ Botão de submissão clicado.")
                     else:
@@ -1045,12 +1046,29 @@ class GoogleFlowAutomation:
                     # Lógica simplificada para modo imagem (espera botão baixar)
                     _log(f"Aguardando o botão 'Baixar' habilitar (máx {timeout_geracao}s)...")
                     xpath_btn_baixar = "//button[.//i[text()='download'] and (.//div[text()='Baixar'] or .//span[text()='Baixar'])]"
+                    
+                    # --- 5. MONITORAMENTO DA GERAÇÃO (Substitua a partir da linha 485) ---
                     fim_espera = time.time() + timeout_geracao
+
                     while time.time() < fim_espera:
+                        # 🚨 CHECK 1: O Flow cuspiu erro fatal no canto?
+                        if self.detectar_erro_fatal_flow():
+                            _log("🚨 [FALHA] Atividade incomum ou erro de política detectado. Abortando conta...")
+                            return False # Isso sinaliza para o main.py trocar de conta
+
+                        # Check do botão baixar
                         btns = self.driver.find_elements(By.XPATH, xpath_btn_baixar)
                         if btns and btns[0].is_displayed() and btns[0].get_attribute("disabled") is None:
-                            _log("✔ Geração concluída!")
+                            
+                            # 🚨 CHECK 2: Trava de 10 segundos (Evita o asset antigo/produto)
+                            # Se habilitou rápido demais, ignoramos porque é resíduo da foto original
+                            if (time.time() - self.momento_ultimo_submit) < 10:
+                                time.sleep(2)
+                                continue
+                                
+                            _log("✔ Geração concluída com sucesso!")
                             return True
+                        
                         time.sleep(4)
                 else:
                     # Usa seu sistema de tracking de progresso inline (barra de % no terminal)
@@ -1500,6 +1518,34 @@ class GoogleFlowAutomation:
             _log(f'Erro no download: {e}')
             salvar_print_debug(self.driver, f"ERRO_FATAL_DOWNLOAD_{caminho_destino.stem}")
             raise
+    
+    def detectar_erro_fatal_flow(self):
+        """
+        Verifica se mensagens de erro apareceram na interface.
+        Retorna True se houver erro, interrompendo o fluxo antes do download.
+        """
+        try:
+            # Seletores baseados no comportamento visual do Google Labs
+            seletores = [
+                "//*[contains(text(), 'unusual activity')]", # Captura a parte em inglês
+                "//*[contains(text(), 'atividade incomum')]", # Captura se o Google traduzir
+                "//*[contains(text(), 'Não foi possível gerar')]",
+                "//*[contains(text(), 'Something went wrong')]",
+                "//*[contains(text(), 'Falha We noticed')]",
+                "//*[contains(text(), 'We noticed some unusual activity')]",
+                "//*[contains(text(), 'Please visit')]",
+                "//*[contains(text(), 'policy')]", # Caso seja erro de política
+                "//div[contains(@class, 'error')]",
+                "//mat-icon[text()='error']"
+            ]
+            
+            for seletor in seletores:
+                erros = self.driver.find_elements(By.XPATH, seletor)
+                if any(e.is_displayed() for e in erros):
+                    return True
+            return False
+        except:
+            return False
         
 # =====================================================================
 #   FUNÇÕES AUXILIARES DE PROCESSAMENTO (TEXTO)
