@@ -69,6 +69,7 @@ ocr_debug/
 # Binários e drivers locais
 # =============================================================================
 *.exe
+*.bat
 chromedriver
 ffmpeg
 ffprobe
