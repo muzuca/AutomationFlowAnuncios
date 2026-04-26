@@ -2,7 +2,6 @@
 # descricao: Central de Prompts Mestre para a IA (Gemini).
 # Concentra a lógica de Roteirização, Avaliação (Júri) e Geração de Imagens.
 
-
 PROMPT_CLASSIFICACAO_ARQUIVOS = """
 Analise o conteúdo visual destes arquivos: {nomes_arquivos}.
 Mapeie e retorne um JSON com:
@@ -18,7 +17,6 @@ Extraia e retorne também estas chaves:
 
 Retorne EXCLUSIVAMENTE o JSON puro. NÃO use blocos de código markdown (```json), devolva apenas as chaves e valores diretamente.
 """
-
 
 PROMPT_VALIDACAO_PRODUTO = """
 Você é um moderador de qualidade para anúncios do TikTok Shop.
@@ -44,6 +42,37 @@ ou
 NAO
 """
 
+PROMPT_DIRETOR_DE_ARTE_IMAGEM = """
+Você é um Diretor de Arte Sênior e especialista em Prompt Engineering para modelos de difusão de imagens ultra-realistas (Midjourney/Flux).
+
+Vou anexar duas imagens:
+- Imagem 1: O Produto ("{nome_produto}").
+- Imagem 2: A Modelo de Referência (Identidade visual).
+
+O TIPO DE CENA que precisamos criar é: {tipo_cena}.
+
+Sua tarefa é analisar o produto e escrever o PROMPT PERFEITO EM INGLÊS para o gerador de imagens criar essa cena. 
+
+Siga esta lógica de raciocínio silenciosamente (não a imprima):
+1. ANÁLISE DO PRODUTO: Qual é o tamanho do produto? Se for pequeno, o enquadramento deve ser close-up/macro. Qual a vibe do produto?
+2. FIGURINO (Styling): Como o produto NÃO é a roupa da Imagem 2, INVENTE e descreva uma roupa incrivelmente adequada para a cena. (Se o produto for a própria roupa, descreva a modelo vestindo EXATAMENTE o produto da Imagem 1).
+3. AMBIENTE: Defina o melhor cenário, iluminação e hora do dia.
+
+REGRAS DE FORMATAÇÃO DO PROMPT (Escreva APENAS o prompt final):
+- DEVE SER 100% EM INGLÊS.
+- Inicie o prompt obrigatoriamente com: "Using the attached reference images, create an ultra-realistic 9:16 vertical image of..."
+- Seja extremamente descritivo com a iluminação (ex: cinematic lighting, golden hour).
+- Especifique a lente/câmera (ex: shot on 85mm lens).
+- Reforce que o rosto e biotipo devem ser EXATAMENTE da modelo de referência.
+
+BLOCO OBRIGATÓRIO DE AÇÃO:
+- Se {tipo_cena} contiver "Frontal" ou "Caminhando": proíba a modelo de segurar roupas.
+- Se {tipo_cena} contiver "POV": descreva apenas "First-person view, strictly two hands visible interacting with the product, no visible face".
+- Adicione OBRIGATORIAMENTE este texto no final: "Negative prompt: deformed product, mutated hands, extra limbs, fused fingers, visible face (if POV), bad anatomy, text, watermarks, different face from reference."
+
+RETORNO CRÍTICO:
+Não escreva saudações. Não explique seu raciocínio. Não use blocos de código (```). Retorne ABSOLUTAMENTE APENAS o texto do prompt em inglês.
+"""
 
 PROMPT_JURI_CANDIDATOS_IMAGEM_BASE = """
 Você é um auditor de qualidade visual extremamente rigoroso para anúncios do TikTok Shop.
@@ -274,7 +303,6 @@ ERROS ABSOLUTAMENTE PROIBIDOS (Apply strictly as Negative Prompt):
 Responda apenas gerando a imagem.
 """
 
-
 PROMPT_GERACAO_IMAGEM_FRONTAL = """
 Você vai receber duas imagens como base absoluta para a geração.
 Imagem 1: Referência do PRODUTO "{nome_produto}".
@@ -305,7 +333,6 @@ Analise o produto "{nome_produto}":
 Responda apenas gerando a imagem.
 """
 
-
 PROMPT_GERACAO_IMAGEM_CAMINHANDO = """
 Você vai receber duas imagens como base absoluta para a geração.
 Imagem 1: Referência do PRODUTO "{nome_produto}".
@@ -334,7 +361,6 @@ A modelo está em corpo inteiro caminhando em direção à câmera.
 Responda apenas gerando a imagem.
 """
 
-
 PROMPT_GERACAO_IMAGEM_PES = """
 Você vai receber duas imagens como base absoluta para a geração.
 Imagem 1: Referência do PRODUTO "{nome_produto}".
@@ -359,7 +385,6 @@ O enquadramento é estritamente da altura do joelho para baixo.
 
 Responda apenas gerando a imagem.
 """
-
 
 PROMPT_GERACAO_IMAGEM_FLAT = """
 Você vai receber uma imagem anexada com o PRODUTO "{nome_produto}" como referência.
@@ -403,7 +428,6 @@ Erros ABSOLUTAMENTE proibidos:
 Responda apenas gerando a imagem.
 """
 
-
 PROMPT_DESCRICAO_DIRETA_POV = """
 Você recebeu uma imagem anexada como referência principal.
 
@@ -425,7 +449,6 @@ Erros ABSOLUTAMENTE proibidos:
 
 Responda apenas gerando a imagem.
 """
-
 
 PROMPT_DESCRICAO_DIRETA_CAMINHANDO = """
 Você vai receber duas imagens. A primeira mostra o produto "{nome_produto}". A segunda é a foto base da modelo.
@@ -454,7 +477,6 @@ Analise o tipo de produto "{nome_produto}":
 Responda apenas gerando a imagem.
 """
 
-
 PROMPT_DESCRICAO_DIRETA_PES = """
 Você vai receber duas imagens. A primeira mostra o produto "{nome_produto}". A segunda é a foto base da modelo.
 
@@ -477,7 +499,6 @@ Erros ABSOLUTAMENTE proibidos:
 Responda apenas gerando a imagem.
 """
 
-
 PROMPT_DESCRICAO_DIRETA_FLAT = """
 Você recebeu uma imagem anexada com o produto "{nome_produto}" como referência.
 
@@ -497,7 +518,6 @@ Erros ABSOLUTAMENTE proibidos:
 
 Responda apenas gerando a imagem.
 """
-
 
 PROMPT_JURI_LOTE_FINAL = """
 Atue como um Diretor de Marketing sênior especialista em conversão para TikTok Shop.
