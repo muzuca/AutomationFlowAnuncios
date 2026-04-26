@@ -133,12 +133,14 @@ Você é um especialista em Social Commerce. Sua tarefa é transformar imagens e
 - DYNAMIC POV RULE: "STRICT POV. Only two hands visible. One hand acts as a fixed support while the second hand performs a subtle touch. NO extra limbs, NO heads, NO bodies."
 - OCCLUSION RULE: "Hands must NEVER cover the main face or branding of the product. Product must remain 100% visible."
 - CLOTHING RULE (Se for roupa): "Model MUST BE WEARING the clothes on her body. DO NOT hold clothes in hands."
+- SMALL OBJECT ZOOM RULE (Se for joia, relógio, colar, brinco, eletrônico pequeno): "Apply a slow, smooth push-in camera movement (zoom in) to highlight product details. 100% fidelity to the original design, DO NOT hallucinate details."
+- SINGLE SHOT RULE (Obrigatório sempre): "Single continuous unbroken shot. NO cuts, NO scene changes, NO transitions at the beginning or end."
 
 AÇÕES PROIBIDAS (Sempre inclua na Action Sequence):
 "DO NOT rotate the product. DO NOT add a third hand. DO NOT cover the product. DO NOT add new elements."
 
 NEGATIVE PROMPT OBRIGATÓRIO (Em Inglês):
-"Negative: deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands."
+"Negative: cuts, transitions, scene changes, multiple shots, sudden jumps, deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands."
 
 5. BANCO DE REFERÊNCIAS (TOM DE VOZ E MÉTRICA EXATA)
 Use estes exemplos como inspiração para o ritmo. Note que TODOS têm exatamente 24 ou 25 palavras.
@@ -150,30 +152,30 @@ Use estes exemplos como inspiração para o ritmo. Note que TODOS têm exatament
 
 [Cena 1: Apresentação do Produto]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). FIRST FRAME: Exact match of the attached base image. LAST FRAME: Same as the first frame, no changes.
-CAMERA — Vertical format 9:16. Subtle handheld breathing motion. NO pans or zooms.
-RULES — STATIC PRODUCT RULE. [Se POV: DYNAMIC POV RULE]. [Se Roupa: CLOTHING RULE].
+CAMERA — Vertical format 9:16. Subtle handheld breathing motion. [Se produto pequeno: Apply SMALL OBJECT ZOOM RULE. Se não: NO pans or zooms]. NO cuts.
+RULES — SINGLE SHOT RULE. STATIC PRODUCT RULE. [Se POV: DYNAMIC POV RULE]. [Se Roupa: CLOTHING RULE].
 ACTION SEQUENCE — Model maintains the exact pose from the photo. Hands are frozen holding the product. [Se POV: Apply Pivot Hand Rule]. Animate only subtle facial expressions and natural lip-sync. DO NOT rotate the product. DO NOT add a third hand. DO NOT cover the product. DO NOT add new elements.
-NEGATIVE — deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands.
+NEGATIVE — cuts, transitions, scene changes, multiple shots, sudden jumps, deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands.
 VOICEOVER: "[Escreva o texto exato em português de 24-25 palavras focando no gancho]"
-AUDIO: Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
+AUDIO: FEMALE voice, Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 [Cena 2: Mostrando a Qualidade]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). FIRST FRAME: Exact match of the attached base image. LAST FRAME: Same as the first frame, no changes.
-CAMERA — Vertical format 9:16. Subtle handheld breathing motion. NO pans or zooms.
-RULES — STATIC PRODUCT RULE. OCCLUSION RULE.
+CAMERA — Vertical format 9:16. Subtle handheld breathing motion. [Se produto pequeno: Apply SMALL OBJECT ZOOM RULE. Se não: NO pans or zooms]. NO cuts.
+RULES — SINGLE SHOT RULE. STATIC PRODUCT RULE. OCCLUSION RULE.
 ACTION SEQUENCE — [Descreva a pose/interação em inglês]. [Se POV: One hand touches the product texture while the other holds it still]. Subtle blinking and breathing. DO NOT rotate the product. DO NOT add a third hand. DO NOT cover the product. DO NOT add new elements.
-NEGATIVE — deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands.
+NEGATIVE — cuts, transitions, scene changes, multiple shots, sudden jumps, deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands.
 VOICEOVER: "[Escreva o texto exato em português de 24-25 palavras focando na qualidade]"
-AUDIO: Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
+AUDIO: FEMALE voice, Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 [Cena 3: Chamada para Ação]
 Transform the input image into an ultra realistic 8-second vertical video (9:16). FIRST FRAME: Exact match of the attached base image. LAST FRAME: Same as the first frame, no changes.
-CAMERA — Vertical format 9:16. Subtle handheld breathing motion. NO pans or zooms.
-RULES — STATIC PRODUCT RULE. OCCLUSION RULE.
+CAMERA — Vertical format 9:16. Subtle handheld breathing motion. NO pans or zooms. NO cuts.
+RULES — SINGLE SHOT RULE. STATIC PRODUCT RULE. OCCLUSION RULE.
 ACTION SEQUENCE — Model looks at the camera with a wide smile and friendly wink. Hands remain perfectly still holding the items. No new gestures. DO NOT rotate the product. DO NOT add a third hand. DO NOT cover the product. DO NOT add new elements.
-NEGATIVE — deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands.
+NEGATIVE — cuts, transitions, scene changes, multiple shots, sudden jumps, deformed product, rotated product, different angle, invented product parts, extra hands, third hand, character changes, visual glitches, floating arms, fused fingers, mutations, morphing, holding clothes in hands.
 VOICEOVER: "[Escreva o texto exato em português de 24-25 palavras com preço arredondado e CTA de urgência]"
-AUDIO: Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
+AUDIO: FEMALE voice, Brazilian Portuguese. Strong carioca accent, high energy, fast-paced.
 
 [Legenda e Hashtags]
 [Escreva um texto curto em português de no máximo 10 palavras, direto, com emojis. Não coloque preços, frete ou links.]
@@ -197,11 +199,13 @@ DADOS DE ENTRADA DESTE PROJETO:
 - Instruções de Teste A/B: {instrucoes_teste_ab}
 
 LEMBRETES CRÍTICOS DO SISTEMA MESTRE (Não desvie em hipótese alguma):
-1. MÉTRICA DE TEMPO: O VOICEOVER de CADA cena DEVE ter RIGOROSAMENTE entre 24 e 25 palavras. Conte as palavras antes de finalizar.
+1. MÉTRICA DE TEMPO E VOZ: O VOICEOVER DEVE ter RIGOROSAMENTE entre 24 e 25 palavras. O campo AUDIO DEVE iniciar com "FEMALE voice".
 2. CONVERSÃO DE PREÇO: Arredonde para cima e escreva por extenso (Ex: R$ 40,50 vira "menos de quarenta e um reais").
-3. MOVIMENTO SEGURO: Aplique "Subtle handheld breathing motion" na câmera. Se for POV, aplique a "Pivot Hand Rule" para evitar a terceira mão.
-4. ESTRUTURA VISUAL: Traga todas as regras anti-glitch (STATIC PRODUCT, OCCLUSION, etc.) e o NEGATIVE prompt completo em INGLÊS para todas as cenas.
-5. INDEPENDÊNCIA DE CENA: Proibido usar "same as above", "repeat" ou atalhos. Escreva a instrução visual e o negative prompt por completo em todas as cenas, pois elas serão processadas isoladamente.
+3. MOVIMENTO E CÂMERA:
+   - SINGLE SHOT RULE: É estritamente proibido haver cortes, transições ou trocas de cenário (NO cuts, NO scene changes).
+   - SMALL OBJECT ZOOM: Se o produto for pequeno (joia, colar, relógio, eletrônico), aplique "Slow, smooth push-in zoom" na CAMERA. Caso contrário, mantenha apenas o "Subtle handheld breathing motion".
+4. ESTRUTURA VISUAL: Traga todas as regras anti-glitch (STATIC PRODUCT, OCCLUSION, etc.) e o NEGATIVE prompt completo em INGLÊS para todas as cenas. NUNCA esqueça de colocar "cuts, transitions, scene changes" no negative.
+5. INDEPENDÊNCIA DE CENA: Proibido usar "same as above", "repeat" ou atalhos. Escreva a instrução visual e o negative prompt por completo em todas as cenas.
 
 FORMATO DE SAÍDA:
 - Não escreva introduções, saudações ou confirmações.
@@ -230,10 +234,11 @@ Critérios obrigatórios:
 5. Ausência de glitches, mutações, membros extras, mãos extras, terceira mão, troca de personagem ou deformações.
 6. O produto permanece no mesmo ângulo da referência durante todo o vídeo, sem rotações ou partes inventadas.
 7. As mãos não cobrem o produto nem bloqueiam a visualização do produto.
-8. Fluidez e naturalidade dos movimentos.
+8. Fluidez e naturalidade dos movimentos (sem cortes bruscos, flashes ou transições indesejadas no início ou fim).
 9. Clareza e naturalidade do áudio.
 
 Critérios de reprovação imediata:
+- qualquer vídeo com cortes, transições ou mudança de cena abrupta
 - qualquer vídeo com terceira mão ou mão extra aparecendo em qualquer frame
 - qualquer vídeo onde o produto gira, vira de lado ou revela ângulos não mostrados na referência
 - qualquer vídeo onde as mãos cobrem o produto de forma que partes do produto sumam
@@ -407,7 +412,7 @@ Sua tarefa é criar uma nova foto ultra-realista no formato vertical 9:16 para a
 Regras específicas:
 - Crie uma cena POV mostrando apenas duas mãos com características {desc_maos}, interagindo naturalmente com o produto "{nome_produto}".
 - Copie o produto exatamente igual ao original da imagem, no mesmo ângulo, centralizado sem deformações ou mudanças no design.
-- As mãos ficam nas laterais ou embaixo do produto, sem cobrir a face principal visível ao espectador.
+- As mãos ficam nas laterales ou embaixo do produto, sem cobrir a face principal visível ao espectador.
 - Estilo lifestyle premium com iluminação suave e fundo desfocado.
 
 Erros ABSOLUTAMENTE proibidos:
@@ -425,21 +430,26 @@ Responda apenas gerando a imagem.
 PROMPT_DESCRICAO_DIRETA_CAMINHANDO = """
 Você vai receber duas imagens. A primeira mostra o produto "{nome_produto}". A segunda é a foto base da modelo.
 
-Sua tarefa é criar uma nova foto ultra-realista no formato vertical 9:16.
+Sua tarefa é criar uma nova foto ultra-realista no formato vertical 9:16 para anúncio.
 
-Regras específicas:
+1. REGRA DE IDENTIDADE E SUBSTITUIÇÃO:
+- Copie o rosto, cabelo e biotipo EXATAMENTE da segunda imagem, sem fusões.
+- IGNORE a roupa original da modelo da segunda imagem. Crie um novo look urbano elegante que destaque o produto.
+
+2. DINÂMICA DO PRODUTO (Action Rules - PAY ATTENTION):
+Analise o tipo de produto "{nome_produto}":
+- Se for JOIA, RELÓGIO ou ACESSÓRIO (ex: colar, brinco, óculos): Ela DEVE ESTAR USANDO no local anatômico correto (pescoço, orelhas, pulso, rosto). É ESTRITAMENTE PROIBIDO segurar joias na mão (DO NOT HOLD IN HANDS).
+- Se for VESTUÁRIO: Ela deve estar vestindo a peça no corpo (WEARING IT).
+- Se for CALÇADO: Ela deve estar calçando nos pés.
+- Se for BOLSA ou OBJETO GERAL: Ela deve carregar ou segurar na mão de forma elegante.
+*Copie o produto exatamente igual à primeira imagem, sem deformações e no mesmo ângulo.*
+
+3. DIREÇÃO DE ARTE:
 - Mostre a modelo em corpo inteiro caminhando em direção à câmera em um ambiente urbano moderno/fashion.
-- Dinâmica do Produto: Se for VESTUÁRIO ou CALÇADO, ela deve estar usando/vestindo. Se for BOLSA/OBJETO, ela deve carregar ou segurar de forma elegante.
-- Copie exatamente o rosto, cabelo e biotipo da modelo da segunda imagem, sem fusões.
-- Copie o produto exatamente igual à primeira imagem, sem deformações.
 - Iluminação natural de fim de tarde e alta definição total.
 
-Erros ABSOLUTAMENTE proibidos:
-- rosto diferente ou fundido da referência
-- produto girado, deformado ou irreconhecível
-- mãos cobrindo o produto
-- membros extras, braços flutuantes ou marcha deformada
-- adição de textos ou gráficos
+4. ERROS ABSOLUTAMENTE PROIBIDOS (Apply strictly as Negative Prompt):
+"holding jewelry in hands, holding clothes in hands, wearing original clothes from reference, fused faces, different face from reference, deformed product, rotated product, hands covering product, third leg, extra limbs, floating arms, deformed walking gait, text, watermarks."
 
 Responda apenas gerando a imagem.
 """
