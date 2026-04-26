@@ -54,13 +54,20 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
             _log("⚠️ CAPTCHA DETECTADO! Acionando IA Auxiliar de Acessibilidade...", "LOGIN")
             from integrations.utils import _get_logs_dir
             
-            # 1. Tira o print do desafio
-            img_path = _get_logs_dir() / "visao" / "CAPTCHA_ATUAL.png"
-            img_captcha[0].screenshot(str(img_path))
+            # 1. Tira o print do desafio e salva FORA da pasta 'visao' para fugir da limpeza do driver
+            img_path = _get_logs_dir() / "captcha_seguro.png"
+            
+            try:
+                img_captcha[0].screenshot(str(img_path))
+                time.sleep(1.5) # Pausa vital para o Windows salvar o arquivo fisicamente
+            except Exception as e:
+                _log(f"Aviso: Fallback para print da tela cheia ({e})", "LOGIN")
+                driver.save_screenshot(str(img_path))
+                time.sleep(1.5)
             
             # 2. Abre a IA Auxiliar (Navegador B)
             _log("🤖 Abrindo Conta Quente para leitura assistiva...", "LOGIN")
-            personal_driver = create_driver(settings) # Vai ler CHROME_HEADLESS=True do .env
+            personal_driver = create_driver(settings) # O create_driver limpa a logs/visao, mas nosso arquivo está a salvo!
             codigo_sugerido = ""
             
             try:
@@ -91,18 +98,23 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
             
             codigo_final = input_com_timeout(msg, timeout=40)
             
-            # Se você deu apenas ENTER, usa o que a IA sugeriu
-            if codigo_final == "":
+            # Se você deu apenas ENTER ou deu timeout, tenta usar o que a IA sugeriu
+            if not codigo_final:
                 codigo_final = codigo_sugerido
             
             if codigo_final:
                 _log(f"Injetando: '{codigo_final}'...", "LOGIN")
-                ca_input = driver.find_element(By.CSS_SELECTOR, "input[name='ca'], input[id='ca'], input[type='text']")
-                ca_input.send_keys(codigo_final)
-                ca_input.send_keys(Keys.ENTER)
-                time.sleep(4)
+                # Seletor robusto para evitar quebra se o Google mudar o ID do input
+                xpath_ca = "//input[@name='ca'] | //input[@id='ca'] | //input[contains(@aria-label, 'letras')] | //input[@type='text' and @maxlength='6']"
+                try:
+                    ca_input = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, xpath_ca)))
+                    ca_input.send_keys(codigo_final)
+                    ca_input.send_keys(Keys.ENTER)
+                    time.sleep(4)
+                except Exception:
+                    raise Exception("Falha no CAPTCHA: Campo de texto não encontrado na tela.")
             else:
-                raise Exception("Falha no CAPTCHA: Sem resposta.")
+                raise Exception("Falha no CAPTCHA: Sem resposta da IA e do Usuário.")
         # =========================================================
 
         # --- ETAPA 2: SENHA ---
