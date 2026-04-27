@@ -44,86 +44,94 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
         time.sleep(3)
         salvar_print_debug(driver, "login_03_pos_email_next")
 
-        # =========================================================
-        # 🚨 RESGATE DE CAPTCHA AUTOMATIZADO (IA AUXILIAR COM PERFIL)
+       # =========================================================
+        # 🚨 RESGATE DE CAPTCHA AUTOMATIZADO (IA AUXILIAR COM RETRY)
         # =========================================================
         img_captcha = driver.find_elements(By.CSS_SELECTOR, "img[id='captchaimg']")
         captcha_visivel = any(img.is_displayed() for img in img_captcha) if img_captcha else False
         
         if captcha_visivel:
             _log("⚠️ CAPTCHA DETECTADO! Acionando IA Auxiliar de Acessibilidade...", "LOGIN")
-           
-            # 1. Captura o print do desafio
-            img_path = _get_logs_dir() / "CAPTCHA_SEGURO.png"
-            try:
-                img_captcha[0].screenshot(str(img_path))
-                time.sleep(1.5)
-            except Exception:
-                driver.save_screenshot(str(img_path))
-                time.sleep(1.5)
             
-            # 2. IA Auxiliar - MÉTODO INTEGRADO COM GEMINIFLOW (HEADLESS)
+            # Instanciamos o driver do assistente FORA do loop para manter a sessão aberta nas retentativas
             personal_driver = None
+            tentativas_captcha = 0
+            max_tentativas = 3
             codigo_sugerido = ""
-            
-            try:
-                from selenium import webdriver
-                from selenium.webdriver.chrome.options import Options
-                from selenium.webdriver.chrome.service import Service
-                from webdriver_manager.chrome import ChromeDriverManager
-                from integrations.gemini import GeminiAnunciosViaFlow
 
-                options = Options()
-                options.add_argument("--remote-debugging-port=9225")
-                options.add_argument("--headless=new") 
-                
-                perfil_dir = _get_logs_dir() / "perfil_pessoal_assistente"
-                perfil_dir.mkdir(parents=True, exist_ok=True)
-                options.add_argument(f"--user-data-dir={perfil_dir}")
-                options.add_experimental_option("excludeSwitches", ["enable-automation"])
-                options.add_experimental_option('useAutomationExtension', False)
-                
-                service = Service(ChromeDriverManager().install())
-                personal_driver = webdriver.Chrome(service=service, options=options)
-                
-                # --- USO DAS FUNÇÕES DO SEU GEMINI.PY ---
-                url_gemini = os.getenv("PERSONAL_CHAT_LINK", "https://gemini.google.com/app")
-                ai_assist = GeminiAnunciosViaFlow(personal_driver, url_gemini=url_gemini)
-                
-                ai_assist.abrir_gemini()
-                ai_assist.anexar_arquivo_local(img_path)
-                
-                prompt_bot = "Retorne apenas as letras e números desta imagem, sem explicações."
-                resposta = ai_assist.enviar_prompt(prompt_bot, timeout=40)
-                
-                if resposta and resposta not in ['RECOVERY_TRIGGERED', 'TIMEOUT', 'SEM_RESPOSTA_UTIL']:
-                    codigo_sugerido = re.sub(r'[^a-zA-Z0-9]', '', resposta.lower()).strip()
-                    _log(f"🧠 IA Sugeriu (via GeminiFlow): '{codigo_sugerido}'", "LOGIN")
+            while tentativas_captcha < max_tentativas:
+                tentativas_captcha += 1
+                _log(f"Iniciando tentativa {tentativas_captcha}/{max_tentativas} de resolver CAPTCHA...", "LOGIN")
 
-            except Exception as e:
-                _log(f"❌ Falha na precisão da IA Auxiliar: {str(e)[:60]}", "LOGIN")
-            finally:
-                if personal_driver:
-                    try: personal_driver.quit()
-                    except: pass
+                # 1. Captura o print do desafio (Sempre atualiza o print se houver erro)
+                img_path = _get_logs_dir() / "CAPTCHA_SEGURO.png"
+                try:
+                    # Tenta pegar o elemento exato
+                    img_captcha = driver.find_elements(By.CSS_SELECTOR, "img[id='captchaimg']")
+                    img_captcha[0].screenshot(str(img_path))
+                    time.sleep(1.5)
+                except Exception:
+                    driver.save_screenshot(str(img_path))
+                    time.sleep(1.5)
+                
+                # 2. IA Auxiliar - MÉTODO INTEGRADO COM GEMINIFLOW (HEADLESS)
+                try:
+                    from selenium import webdriver
+                    from selenium.webdriver.chrome.options import Options
+                    from selenium.webdriver.chrome.service import Service
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    from integrations.gemini import GeminiAnunciosViaFlow
 
-            # 4. Injeção Automática e Validação de Re-tentativa
-            sys.stdout.write('\a') # Beep
-            
-            # Tenta preencher sozinho se a IA deu um palpite
-            tentar_automatico = True if codigo_sugerido else False
+                    # Só cria o navegador do assistente se ele ainda não existir
+                    if personal_driver is None:
+                        options = Options()
+                        options.add_argument("--remote-debugging-port=9225")
+                        options.add_argument("--headless=new") 
+                        
+                        perfil_dir = _get_logs_dir() / "perfil_pessoal_assistente"
+                        perfil_dir.mkdir(parents=True, exist_ok=True)
+                        options.add_argument(f"--user-data-dir={perfil_dir}")
+                        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                        options.add_experimental_option('useAutomationExtension', False)
+                        
+                        service = Service(ChromeDriverManager().install())
+                        personal_driver = webdriver.Chrome(service=service, options=options)
+                    
+                    # Uso das funções do seu GEMINI.PY
+                    url_gemini = os.getenv("PERSONAL_CHAT_LINK", "https://gemini.google.com/app")
+                    ai_assist = GeminiAnunciosViaFlow(personal_driver, url_gemini=url_gemini)
+                    
+                    # Se não estiver no Gemini, abre. Se já estiver, só anexa no mesmo chat.
+                    if "gemini.google.com" not in personal_driver.current_url:
+                        ai_assist.abrir_gemini()
+                    
+                    ai_assist.anexar_arquivo_local(img_path)
+                    
+                    prompt_bot = f"Este é um novo desafio (tentativa {tentativas_captcha}). Retorne apenas as letras e números desta imagem, sem explicações."
+                    resposta = ai_assist.enviar_prompt(prompt_bot, timeout=40)
+                    
+                    if resposta and resposta not in ['RECOVERY_TRIGGERED', 'TIMEOUT', 'SEM_RESPOSTA_UTIL']:
+                        codigo_sugerido = re.sub(r'[^a-zA-Z0-9]', '', resposta.lower()).strip()
+                        _log(f"🧠 IA Sugeriu (via GeminiFlow): '{codigo_sugerido}'", "LOGIN")
 
-            while True:
+                except Exception as e:
+                    _log(f"❌ Falha na precisão da IA Auxiliar: {str(e)[:60]}", "LOGIN")
+                
+                # 4. Injeção Automática e Validação de Re-tentativa
+                sys.stdout.write('\a') # Beep
+                
+                # Na primeira tentativa do código atual, tenta o automático da IA
+                tentar_automatico = True if codigo_sugerido else False
+                
                 if tentar_automatico:
                     _log(f"🤖 Tentando preenchimento automático: '{codigo_sugerido}'", "LOGIN")
                     codigo_final = codigo_sugerido
-                    tentar_automatico = False # Próxima volta, se houver, será manual
                 else:
-                    # Se não tem sugestão ou a IA errou, abre a imagem e pede no terminal
+                    # Fallback manual se a IA falhar ou for a segunda tentativa do mesmo código
                     try: os.startfile(str(img_path))
                     except: pass
                     
-                    msg = f"\n👉 [URGENTE] DIGITE O CAPTCHA ({account.email}). \nIA Sugeriu: '{codigo_sugerido}' \n[Pressione ENTER para confirmar ou digite o correto]: "
+                    msg = f"\n👉 [URGENTE] DIGITE O CAPTCHA ({account.email}). Tentativa {tentativas_captcha}/{max_tentativas}\nIA Sugeriu: '{codigo_sugerido}' \n[ENTER para confirmar ou digite o correto]: "
                     codigo_final = input_com_timeout(msg, timeout=40)
                     if not codigo_final:
                         codigo_final = codigo_sugerido
@@ -139,24 +147,31 @@ def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount) 
                         ca_input.send_keys(Keys.ENTER)
                         time.sleep(5)
                         
-                        # Verifica se o CAPTCHA continua na tela
+                        # Verifica se o CAPTCHA continua na tela (Google rejeitou)
                         novo_captcha = driver.find_elements(By.CSS_SELECTOR, "img[id='captchaimg']")
-                        if any(img.is_displayed() for img in novo_captcha):
-                            _log("❌ Código incorreto! O Google gerou um novo CAPTCHA.", "LOGIN")
-                            # Atualiza o print do desafio para a rodada manual
-                            novo_captcha[0].screenshot(str(img_path))
-                            codigo_sugerido = "" 
-                            tentar_automatico = False 
-                            continue 
+                        captcha_ainda_visivel = any(img.is_displayed() for img in novo_captcha) if novo_captcha else False
+
+                        if captcha_ainda_visivel:
+                            _log(f"❌ Código '{codigo_final}' incorreto! O Google gerou um novo CAPTCHA.", "LOGIN")
+                            codigo_sugerido = "" # Limpa para a IA tentar ler o novo print
+                            continue # Volta para o topo do While para tirar novo print e perguntar à IA
                         else:
                             _log("✅ CAPTCHA superado com sucesso!", "LOGIN")
-                            break 
+                            break # Sai do While de tentativas e segue para a senha
                             
                     except Exception as e:
                         _log(f"Erro ao interagir com campo de CAPTCHA: {e}", "LOGIN")
                         break
                 else:
-                    raise Exception("Falha no CAPTCHA: Sem resposta da IA e do Usuário.")
+                    # Se não houver código final (timeout/vazio) e for a última tentativa, explode erro
+                    if tentativas_captcha >= max_tentativas:
+                        if personal_driver: personal_driver.quit()
+                        raise Exception("Falha no CAPTCHA: Sem resposta da IA e do Usuário após 3 tentativas.")
+
+            # Limpeza final do driver assistente após o loop
+            if personal_driver:
+                try: personal_driver.quit()
+                except: pass
         # =========================================================
 
         # --- ETAPA 2: SENHA ---
