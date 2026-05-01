@@ -26,9 +26,10 @@ from integrations.google_login import login_google, open_gemini
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry, fechar_popup_cromado_pos_gemini
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
-from anuncios.prompts import PROMPT_GERACAO_IMAGEM_CAMINHANDO, PROMPT_GERACAO_IMAGEM_FLAT, PROMPT_GERACAO_IMAGEM_FRONTAL, PROMPT_GERACAO_IMAGEM_PES, PROMPT_GERACAO_IMAGEM_POV
+from anuncios.prompts import PROMPT_DIRETOR_DE_ARTE_IMAGEM, PROMPT_GERACAO_IMAGEM_CAMINHANDO, PROMPT_GERACAO_IMAGEM_FLAT, PROMPT_GERACAO_IMAGEM_FRONTAL, PROMPT_GERACAO_IMAGEM_PES, PROMPT_GERACAO_IMAGEM_POV
 # 🚨 IMPORTAÇÕES DE UTILS PADRONIZADAS
 from integrations.utils import (
+    salvar_print_debug,
     setup_logging,
     _log, 
     log_step,          
@@ -39,7 +40,8 @@ from integrations.utils import (
     formatar_roteiro_limpo,
     salvar_bloco_unificado,
     extrair_e_salvar_legenda,
-    salvar_ultima_conta_env
+    salvar_ultima_conta_env,
+    limpar_logs_antigos
 )
 
 def main() -> None:
@@ -62,6 +64,9 @@ def main() -> None:
         while True:
             try:
                 settings = get_settings()
+
+                # LIMPEZA DO LOG COM BASE NO .ENV
+                limpar_logs_antigos(settings.log_retention_hours)
                 
                 # --- PARÂMETROS GLOBAIS DO .ENV (Lidos a cada ciclo para permitir updates em tempo real) ---
                 qtd_variantes = int(os.getenv("VIDEOS_POR_ANUNCIO", 1))
@@ -424,10 +429,8 @@ def main() -> None:
                                 
                                 # --- BUSCA DE IDENTIDADE (MODELO) VIA .ENV ---
                                 path_task = Path(prepared.task.folder_path)
-                                # Sobe níveis para achar o nome da pasta pai (Ex: LaraSelect)
                                 nome_identidade = task.model_name
                                 
-                                # Tenta achar o arquivo na pasta configurada no .env
                                 foto_modelo = Path(settings.modelos_dir) / f"{nome_identidade}.png"
                                 if not foto_modelo.exists():
                                     foto_modelo = Path(settings.modelos_dir) / f"{nome_identidade}.jpg"
@@ -437,57 +440,69 @@ def main() -> None:
                                     log_success(f"Modelo identificado via .env: {foto_modelo.name}")
                                 # ---------------------------------------------
 
-                                # --- PREPARAÇÃO DOS DADOS PARA OS NOVOS PROMPTS ---
+                                # --- PREPARAÇÃO DOS DADOS (LIMPA DOS IFs ESTÁTICOS) ---
                                 dados_anuncio = prepared.task.dados_anuncio
                                 nome_prod = dados_anuncio.get('nome_produto', 'produto')
-
-                                # Busca os dicionários que o processor carregou
-                                descricoes = getattr(prepared.task, 'descricoes_prompts', {})
-                                perfil_modelo = descricoes.get('modelo', {})
-                                perfil_filmagem = descricoes.get('filmagem', {})
-
-                                # 1. desc_maos (Vem do perfil da modelo no processor)
-                                desc_maos = perfil_modelo.get('maos', 'mãos femininas delicadas, unhas bem cuidadas')
-
-                                # 2. desc_estilo (Vem das regras de filmagem ou fallback premium)
-                                desc_estilo = perfil_filmagem.get('estilo_visual', 'lifestyle premium, cinematográfico, alta nitidez')
-
-                                # 3. contexto_produto (Vem dos benefícios do produto ou fallback de cenário)
-                                contexto_produto = dados_anuncio.get('beneficios', 'ambiente elegante e moderno condizente com o produto')
-
-                                # --- SELETOR DINÂMICO DE PROMPT POR CATEGORIA ---
                                 pasta_estilo = estilo_filmagem_pasta.lower()
+                                url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
 
-                                if "frontal" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_FRONTAL.format(
-                                        nome_produto=nome_prod,
-                                        contexto_produto=contexto_produto,
-                                        desc_estilo=desc_estilo
-                                    )
-                                elif "caminhando" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_CAMINHANDO.format(
-                                        nome_produto=nome_prod,
-                                        desc_estilo=desc_estilo
-                                    )
-                                elif "pes" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_PES.format(
-                                        nome_produto=nome_prod,
-                                        contexto_produto=contexto_produto,
-                                        desc_estilo=desc_estilo
-                                    )
-                                elif "flat" in pasta_estilo:
-                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_FLAT.format(
-                                        nome_produto=nome_prod,
-                                        contexto_produto=contexto_produto,
-                                        desc_estilo=desc_estilo
-                                    )
-                                else:
-                                    # PROMPT_GERACAO_IMAGEM_POV pede nome_produto e desc_maos
-                                    prompt_img_base_flow = PROMPT_GERACAO_IMAGEM_POV.format(
-                                        nome_produto=nome_prod,
-                                        desc_maos=desc_maos
-                                    )
+                                # --- ETAPA IA: DIRETOR DE ARTE GERANDO PROMPTS A/B ---
+                                log_step(f"ETAPA IA: Diretor de Arte criando prompts para cena {estilo_filmagem_pasta}...")
                                 
+                                # Fallback estático caso o Gemini caia
+                                prompt_a = f"Using reference images, create an ultra realistic {estilo_filmagem_pasta} vertical image of {nome_prod}."
+                                prompt_b = prompt_a + " Different angle, subtle dynamic lighting shift."
+                                
+                                try:
+                                    # 1. Abre/Limpa o chat no Gemini para atuar como Diretor de Arte
+                                    gemini_diretor = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
+                                    gemini_diretor.abrir_gemini()
+                                    gemini_diretor.abrir_novo_chat_limpo() 
+                                    
+                                    # 2. Anexa as imagens de referência para a IA analisar
+                                    gemini_diretor.anexar_arquivo_local(primeira_imagem) # Produto
+                                    if cam_modelo_param and cam_modelo_param.exists():
+                                        gemini_diretor.anexar_arquivo_local(cam_modelo_param) # Modelo
+                                        
+                                    # 3. Prepara a instrução do Diretor
+                                    prompt_diretor = PROMPT_DIRETOR_DE_ARTE_IMAGEM.format(
+                                        nome_produto=nome_prod,
+                                        tipo_cena=estilo_filmagem_pasta
+                                    )
+                                    
+                                    # 📸 PRINT 1: Validação dos anexos e estado antes do envio
+                                    salvar_print_debug(driver, f"DIRETOR_ARTE_01_ANEXOS_CARREGADOS_{sufixo_rot}")
+                                    
+                                    # 4. Envia e captura a resposta
+                                    resposta_ia = gemini_diretor.enviar_prompt(prompt_diretor, timeout=60, aguardar_resposta=True)
+                                    
+                                    # 📸 PRINT 2: Validação visual da resposta gerada
+                                    salvar_print_debug(driver, f"DIRETOR_ARTE_02_RESPOSTA_GERADA_{sufixo_rot}")
+                                    
+                                    if resposta_ia and resposta_ia not in ['RECOVERY_TRIGGERED', 'TIMEOUT', 'SEM_RESPOSTA_UTIL', 'ERRO_F5']:
+                                        # Extrai o texto limpo da IA
+                                        prompt_limpo = resposta_ia.replace("```json", "").replace("```", "").strip()
+                                        prompt_a = prompt_limpo
+                                        prompt_b = prompt_a + " Subtle dynamic lighting shift, extremely detailed."
+                                        
+                                        # 📝 LOG VISUAL NO TERMINAL
+                                        print("\n" + "="*60)
+                                        print(f"🎬 PROMPTS DO DIRETOR DE ARTE ({sufixo_rot})")
+                                        print("="*60)
+                                        print(f"🟢 VARIANTE A:\n{prompt_a}\n")
+                                        print(f"🔵 VARIANTE B:\n{prompt_b}")
+                                        print("="*60 + "\n")
+                                            
+                                        log_success("Prompts A e B gerados com sucesso!")
+                                    else:
+                                        raise Exception("Resposta inválida do Gemini Diretor de Arte.")
+                                        
+                                except Exception as e:
+                                    if "SWITCH_ACCOUNT" in str(e): raise e
+                                    salvar_print_debug(driver, f"DIRETOR_ARTE_ERRO_CRITICO_{sufixo_rot}")
+                                    log_error(f"Falha no Diretor de Arte. Usando fallback estático. Erro: {e}")
+                                # --- FIM DA ETAPA IA ---
+
                                 try:
                                     pasta_tarefa = Path(prepared.task.folder_path)
                                     cand_a = pasta_tarefa / f"ImgCand_A_{sufixo_rot}.png"
@@ -496,30 +511,30 @@ def main() -> None:
                                     if cand_a.exists(): cand_a.unlink()
                                     if cand_b.exists(): cand_b.unlink()
                                     
-                                    # 1. Gera Variante A (Passando o caminho_modelo)
+                                    # 1. Gera Variante A (Usando o PROMPT Dinâmico A)
                                     log_step(f"Gerando Imagem Base Variante A ({sufixo_rot}) no Flow...")
                                     flow_bot_img.gerar_imagem_base(
                                         caminho_referencia=primeira_imagem,
-                                        prompt=prompt_img_base_flow,
+                                        prompt=prompt_a,
                                         caminho_saida=cand_a,
                                         caminho_modelo=cam_modelo_param 
                                     )
                                     
-                                    # 2. Gera Variante B (Passando o caminho_modelo)
+                                    # 2. Gera Variante B (Usando o PROMPT Dinâmico B)
                                     log_step(f"Gerando Imagem Base Variante B ({sufixo_rot}) no Flow...")
                                     flow_bot_img.gerar_imagem_base(
                                         caminho_referencia=primeira_imagem,
-                                        prompt=prompt_img_base_flow + " Ultra realistic details, subtle dynamic lighting shift.",
+                                        prompt=prompt_b,
                                         caminho_saida=cand_b,
                                         caminho_modelo=cam_modelo_param
                                     )
                                     
-                                    # 3. Avaliação no Gemini
+                                    # 3. Avaliação no Gemini (Júri)
                                     log_step("Enviando Variantes para o Diretor de Arte (Gemini) escolher a melhor...")
                                     gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
                                     gemini_juri.abrir_gemini()
                                     
-                                    # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no Júri
+                                    # 🚨 CORREÇÃO MANTIDA: Pulo de conta se o anexo falhar no Júri
                                     try:
                                         melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(cand_a, cand_b, nome_prod, estilo_filmagem_pasta)
                                     except Exception as e:

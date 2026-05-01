@@ -38,6 +38,7 @@ ENV/
 *.log
 *.txt
 execucao.txt
+log_execucao.txt
 historico_roteiros.json
 historico/
 logs/

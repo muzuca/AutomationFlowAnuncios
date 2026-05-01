@@ -31,9 +31,10 @@ class Settings:
     flow_url: str
     google_login_url: str
     chrome_headless: bool
-    use_proxy: bool  # <--- NOVA PROPRIEDADE
+    use_proxy: bool
     chrome_implicit_wait: int
     chrome_page_load_timeout: int
+    log_retention_hours: int
     accounts: list[GoogleAccount]
 
 
@@ -97,5 +98,6 @@ def get_settings(reload: bool = True) -> Settings:
         use_proxy=_get_bool('USE_PROXY', default=False), # <--- MAPEAMENTO DA FLAG NO .ENV
         chrome_implicit_wait=int(_get_env('CHROME_IMPLICIT_WAIT', default='5')),
         chrome_page_load_timeout=int(_get_env('CHROME_PAGE_LOAD_TIMEOUT', default='120')),
+        log_retention_hours=int(_get_env('LOG_RETENTION_HOURS', default='12')),
         accounts=_load_accounts(),
     )

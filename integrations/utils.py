@@ -40,18 +40,28 @@ def setup_logging() -> None:
 def _log(msg: str, prefixo: str = "SISTEMA") -> None:
     """
     Logger centralizado. 
-    Uso: _log("Iniciando", "GEMINI-IA") -> [15:30:01] [GEMINI-IA] Iniciando
+    Console: [15:30:01] [GEMINI-IA] Iniciando
+    TXT:     [2024-05-24 15:30:01] [GEMINI-IA] Iniciando
     """
-    ts = time.strftime('%H:%M:%S')
-    texto = f'[{ts}] [{prefixo}] {msg}'
-    print(texto)
+    from datetime import datetime
+    agora = datetime.now()
     
-    # Salva opcionalmente num arquivo de log do dia para conferência
+    # Hora para o terminal (curto)
+    ts_console = agora.strftime('%H:%M:%S')
+    # Data e Hora para o TXT (necessário para a faxina funcionar)
+    ts_file = agora.strftime('%Y-%m-%d %H:%M:%S') 
+    
+    texto_console = f'[{ts_console}] [{prefixo}] {msg}'
+    texto_file = f'[{ts_file}] [{prefixo}] {msg}'
+    
+    print(texto_console)
+    
+    # Salva no novo arquivo com a data
     try:
-        log_file = Path("logs") / "execucao.txt"
+        log_file = Path("logs") / "log_execucao.txt" # <--- NOME ALTERADO AQUI
         log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write(texto + "\n")
+            f.write(texto_file + "\n")
     except: pass
 
 def log_step(message: str) -> None:
@@ -276,3 +286,40 @@ def salvar_ultima_conta_env(email: str) -> None:
         env_path.write_text("\n".join(new_lines) + "\n", encoding='utf-8')
     except Exception as e:
         _log(f"Aviso: Não foi possível salvar o email da conta no .env: {e}", "SISTEMA")            
+
+def limpar_logs_antigos(horas: int = 12) -> None:
+    """Lê o arquivo log_execucao.txt e mantém apenas as linhas das últimas X horas."""
+    try:
+        log_file = Path("logs") / "log_execucao.txt"
+        if not log_file.exists():
+            return
+
+        with open(log_file, "r", encoding="utf-8") as f:
+            linhas = f.readlines()
+
+        agora = datetime.now()
+        from datetime import timedelta # Garantindo que timedelta está disponível
+        limite_tempo = agora - timedelta(hours=horas)
+        
+        linhas_mantidas = []
+        mantendo = False 
+        
+        for linha in linhas:
+            match_data = re.search(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]', linha)
+            
+            if match_data:
+                try:
+                    tempo_linha = datetime.strptime(match_data.group(1), '%Y-%m-%d %H:%M:%S')
+                    mantendo = tempo_linha >= limite_tempo
+                except ValueError:
+                    pass
+            
+            if mantendo:
+                linhas_mantidas.append(linha)
+
+        if len(linhas_mantidas) < len(linhas):
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.writelines(linhas_mantidas)
+
+    except Exception:
+        pass
