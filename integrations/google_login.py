@@ -376,22 +376,30 @@ def garantir_medico_vivo(driver_medico: WebDriver | None, settings: Settings, ur
     # Cria um novo driver usando a lógica robusta já existente
     return inicializar_medico_seguro(settings, url_alvo)
 
-def realizar_checkup_medico_pre_voo(settings: Settings) -> None:
+def realizar_checkup_medico_pre_voo(settings) -> None:
     """
-    PARA O SCRIPT e abre o perfil de acessibilidade de forma visível.
-    Objetivo: Permitir que o usuário faça o login manual e aceite os termos 
-    do Gemini/Google para salvar os cookies no perfil persistente.
+    Verifica se o perfil médico já existe. Se não existir, PARA O SCRIPT e abre 
+    o perfil de acessibilidade de forma visível para configuração manual inicial.
     """
     from integrations.utils import _get_logs_dir, _log
+    import sys
+    import time
+    from pathlib import Path
+    
+    perfil_dir = _get_logs_dir() / "perfil_acessibilidade"
+    
+    # 🚀 A TRAVA: Se a pasta já existe e não está vazia, o perfil já foi configurado!
+    if perfil_dir.exists() and any(perfil_dir.iterdir()):
+        _log("🏥 [PRE-FLIGHT] Perfil da Unidade Médica já configurado. Pulando setup manual.", "SISTEMA")
+        return
+
+    _log("🏥 [PRE-FLIGHT] Primeiro uso detectado! Iniciando configuração manual da Unidade Médica...", "SISTEMA")
+    
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
     from webdriver_manager.chrome import ChromeDriverManager
-    import sys
-    import time
-
-    _log("🏥 [PRE-FLIGHT] Iniciando configuração manual da Unidade Médica...", "SISTEMA")
-
+    
     driver_setup = None
     try:
         # 1. Configura o Chrome VISÍVEL e aponta para a pasta de acessibilidade
@@ -401,7 +409,6 @@ def realizar_checkup_medico_pre_voo(settings: Settings) -> None:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
-        perfil_dir = _get_logs_dir() / "perfil_acessibilidade"
         perfil_dir.mkdir(parents=True, exist_ok=True)
         options.add_argument(f"--user-data-dir={perfil_dir}")
 
@@ -415,10 +422,10 @@ def realizar_checkup_medico_pre_voo(settings: Settings) -> None:
         # 3. BLOQUEIO TOTAL DO SCRIPT (Aguardando o humano)
         sys.stdout.write('\a') # Beep de atenção
         print("\n" + "!"*60)
-        print("👉 [AÇÃO MANUAL OBRIGATÓRIA]")
+        print("👉 [AÇÃO MANUAL OBRIGATÓRIA - PRIMEIRO USO]")
         print("1. O navegador abriu de forma VISÍVEL.")
         print("2. Faça o login na conta do Google que será a 'MÉDICA'.")
-        print("3. Aceite todos os termos, pop-ups e onbordering do Gemini.")
+        print("3. Aceite todos os termos, pop-ups e onboarding do Gemini.")
         print("4. Mande um 'Oi' no chat só para garantir que está funcionando.")
         print("!"*60)
         
