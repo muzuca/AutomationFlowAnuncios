@@ -58,7 +58,7 @@ def main() -> None:
     try:
         log_step('🚀 INICIANDO MODO WATCHER (MONITORAMENTO 24/7)')
         log_step('ETAPA 1: sincronizando credenciais HUMBLE iniciais')
-        #executar_sincronizacao()
+        executar_sincronizacao()
         log_success('Credenciais prontas')
         
         limpar_diretorio_visao()
@@ -119,7 +119,7 @@ def main() -> None:
             # --- NOVA LÓGICA DE SINCRONIZAÇÃO A CADA TAREFA ---
             log_step('🔄 Sincronizando credenciais HUMBLE frescas para esta tarefa...')
             try:
-                #executar_sincronizacao()
+                executar_sincronizacao()
                 settings = get_settings() # Recarrega as contas fresquinhas do .env atualizado
                 log_success('Credenciais atualizadas com sucesso.')
             except Exception as e:
@@ -158,7 +158,7 @@ def main() -> None:
                 if contas_esgotadas > 0 and contas_esgotadas >= len(accounts):
                     log_error("🚨 TODAS as contas do rodízio atual falharam para esta tarefa! Reciclando contas...")
                     try:
-                        #executar_sincronizacao()
+                        executar_sincronizacao()
                         return
                     except Exception as e:
                         log_error(f"Erro ao ressincronizar contas: {e}")
