@@ -701,34 +701,56 @@ class GoogleFlowAutomation:
             # --- MONITORAMENTO COM RADAR DE FALHA GLOBAL ---
             _log(f"Monitorando geração (máx {timeout_geracao}s)...")
             
-            # Trava cega reduzida para 15s para começar a vigiar a falha mais cedo
             _log("[FLOW-IA] Aguardando processamento inicial...")
             time.sleep(15)
             
-            fim_espera = time.time() + (timeout_geracao - 15)
+            # Garante a contagem de tempo
+            momento_submit = time.time()
+            fim_espera = momento_submit + timeout_geracao
 
             while time.time() < fim_espera:
-                # 🚀 1. RADAR DE FALHA GLOBAL (Pega o "Unusual Activity" na lateral)
-                erro_tela = self.driver.execute_script("""
-                    var txt = document.body.innerText || "";
-                    txt = txt.toLowerCase();
-                    return txt.includes('unusual activity') || 
-                        txt.includes('policy') || 
-                        txt.includes('failed') || 
-                        (txt.includes('falha') && txt.includes('noticed'));
+                # 🚀 SCRIPT RADAR AVANÇADO
+                status = self.driver.execute_script("""
+                    var txt = document.body.innerText.toLowerCase();
+                    
+                    // 1. Verifica falhas críticas
+                    if (txt.includes('unusual activity') || txt.includes('policy') || txt.includes('failed') || (txt.includes('falha') && txt.includes('noticed'))) {
+                        return 'FALHA';
+                    }
+                    
+                    // 2. Procura ativamente pelo botão de download (por texto ou ícone)
+                    var btns = document.querySelectorAll('button');
+                    for (var b of btns) {
+                        var b_txt = b.innerText.toLowerCase();
+                        if (b_txt.includes('download') || b_txt.includes('baixar') || b.innerHTML.includes('download')) {
+                            return 'SUCESSO_BOTAO';
+                        }
+                    }
+                    
+                    // 3. Fallback: Se a caixa de texto secou, significa que enviou. 
+                    // Se enviou e não tem mais botão de "Stop", é porque gerou.
+                    var box = document.querySelector('div[role="textbox"], textarea');
+                    if (box && box.innerText.trim() === '') {
+                        var is_generating = false;
+                        for (var b of btns) {
+                            if (b.innerText.toLowerCase().includes('stop') || b.innerHTML.includes('stop')) {
+                                is_generating = true;
+                            }
+                        }
+                        if (!is_generating) {
+                            return 'SUCESSO_FALLBACK';
+                        }
+                    }
+                    
+                    return 'AGUARDANDO';
                 """)
                 
-                if erro_tela:
+                if status == 'FALHA':
                     _log("🚨 FALHA DETECTADA NA TELA (Unusual Activity / Policy).")
-                    # Break aqui sai do while e retorna False no final da função
                     break
-
-                # 2. SUCESSO REAL (Verifica se a seta destravou)
-                xpath_seta = "//button[.//i[contains(text(), 'arrow') or contains(text(), 'send') or contains(text(), 'sparkle')]] | //button[contains(@aria-label, 'Gerar')]"
-                setas = self.driver.find_elements(By.XPATH, xpath_seta)
-                
-                if setas and setas[-1].is_displayed() and setas[-1].get_attribute("disabled") is None:
-                    # Garantia contra falso-positivo da imagem base
+                    
+                if status in ['SUCESSO_BOTAO', 'SUCESSO_FALLBACK']:
+                    # Trava contra falso-positivo (imagens muito rápidas)
                     if (time.time() - momento_submit) < 20:
                         time.sleep(2)
                         continue
