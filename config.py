@@ -23,7 +23,7 @@ class GoogleAccount:
 class Settings:
     base_dir: Path
     env_path: Path
-    products_base_dir: str
+    products_dir: str
     modelos_dir: str
     downloads_dir: str
     ffmpeg_path: str
@@ -59,7 +59,8 @@ def _get_bool(name: str, default: bool = False) -> bool:
 def _load_accounts(max_accounts: int = 30) -> list[GoogleAccount]:
     accounts: list[GoogleAccount] = []
 
-    for i in range(1, max_accounts + 1):
+    # Ajustado para começar do 0 (Conta Ultra/Mestre)
+    for i in range(0, max_accounts + 1):
         email = os.getenv(f'HUMBLE_EMAIL_{i}')
         password = os.getenv(f'HUMBLE_PASSWORD_{i}')
 
@@ -87,7 +88,7 @@ def get_settings(reload: bool = True) -> Settings:
     return Settings(
         base_dir=BASE_DIR,
         env_path=ENV_PATH,
-        products_base_dir=_get_env('PRODUCTS_BASE_DIR', required=True),
+        products_dir=_get_env('PRODUCTS_DIR', required=True),
         modelos_dir=_get_env('MODELOS_DIR', required=True),
         downloads_dir=_get_env('DOWNLOADS_DIR', required=True),
         ffmpeg_path=_get_env('FFMPEG_PATH', default='ffmpeg.exe'),

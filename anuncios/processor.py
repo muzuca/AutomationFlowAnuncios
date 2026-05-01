@@ -57,8 +57,8 @@ def _parse_task_assets(task: AdTask) -> AdTask:
     return task
 
 
-def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
-    base_path = Path(products_base_dir)
+def scan_pending_tasks(products_dir: str) -> list[AdTask]:
+    base_path = Path(products_dir)
     tasks: list[AdTask] = []
 
     if not base_path.exists():
@@ -132,8 +132,8 @@ def scan_pending_tasks(products_base_dir: str) -> list[AdTask]:
     tasks.sort(key=lambda item: (item.model_name.lower(), item.shoot_type.lower(), item.task_id))
     return tasks
 
-def get_next_pending_task(products_base_dir: str) -> AdTask | None:
-    tasks = scan_pending_tasks(products_base_dir)
+def get_next_pending_task(products_dir: str) -> AdTask | None:
+    tasks = scan_pending_tasks(products_dir)
     return tasks[0] if tasks else None
 
 def prepare_task(task: AdTask) -> PreparedTaskResult:

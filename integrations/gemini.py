@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, _get_logs_dir, salvar_ultimo_prompt, limpar_diretorio_visao, forcar_fechamento_janela_windows
+from integrations.self_healing import cacar_elemento_universal
 
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -46,11 +47,15 @@ def _log(msg: str):
 
 
 class GeminiAnunciosViaFlow:
-    def __init__(self, driver: Any, url_gemini: str, timeout: int = 30):
+    def __init__(self, driver: Any, url_gemini: str, timeout: int = 30, driver_acessibilidade=None, url_gemini_acessibilidade=None):
         self.driver = driver
         self.url_gemini = url_gemini
         self.wait = WebDriverWait(driver, timeout, poll_frequency=0.1)
         self.timeout = timeout
+
+        # Salva o "médico" para o Hunter usar
+        self.driver_acessibilidade = driver_acessibilidade
+        self.url_gemini_acessibilidade = url_gemini_acessibilidade
         
         # --- ZERANDO DIRETÓRIO DE LOGS A CADA CICLO ---
         limpar_diretorio_visao()
@@ -410,20 +415,28 @@ class GeminiAnunciosViaFlow:
         salvar_print_debug(self.driver,"ERRO_TEXTAREA_MORTA")
         raise TimeoutException('Falha irrecuperável: A caixa de digitação não existe na tela atual.')
 
-    def _obter_botao_enviar(self) -> Optional[WebElement]:
-        seletores = ['button[aria-label="Send message"]', '.send-button-container button', '.initial-input-area-container .send-icon']
-        for seletor in seletores:
-            try:
-                elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                for el in elementos:
-                    if not el.is_displayed():
-                        continue
-                    aria_disabled = (el.get_attribute('aria-disabled') or '').strip().lower()
-                    disabled = el.get_attribute('disabled')
-                    if aria_disabled == 'false' and disabled is None:
-                        return el
-            except Exception:
-                pass
+    def _obter_botao_enviar(self, permitir_ia: bool = False) -> Optional[WebElement]:
+        """Usa o Hunter para monitorar o botão de envio com suporte opcional a Autocura."""
+        btn = cacar_elemento_universal(
+            driver=self.driver,
+            chave_memoria="gemini_botao_enviar",
+            descricao_para_ia="Botão de enviar mensagem (Send message) no chat do Gemini",
+            seletores_rapidos=[
+                'button[aria-label="Send message"]', 
+                '.send-button-container button', 
+                '.initial-input-area-container .send-icon',
+                'button[data-test-id="send-button"]'
+            ],
+            palavras_semanticas=['send message', 'enviar', 'send-button', 'seta'],
+            permitir_autocura=permitir_ia,
+            driver_acessibilidade=self.driver_acessibilidade,
+            url_gemini=self.url_gemini_acessibilidade,
+            etapa="GEMINI_CHAT"
+        )
+        
+        if btn and btn.is_displayed() and btn.get_attribute('disabled') is None and (btn.get_attribute('aria-disabled') or '').strip().lower() != 'true':
+            return btn
+            
         return None
 
     def _aguardar_upload_estabilizar(self, timeout: int = 20, is_video: bool = False) -> None:
@@ -576,7 +589,7 @@ class GeminiAnunciosViaFlow:
             
         return None
 
-    def _aguardar_fim_analise(self, timeout: int = 60) -> bool:
+    def _aguardar_fim_analise(self, timeout: int = 120) -> bool:
         """
         Lógica baseada puramente no estado dos botões (Stop vs Mic/Send).
         Identifica quando o processamento terminou validando o sumiço do Stop
@@ -629,14 +642,45 @@ class GeminiAnunciosViaFlow:
         
         return False
     
-    def _aguardar_resposta_textual(self, timeout: int = 60) -> str:
+    def _aguardar_resposta_textual(self, timeout: int = 120) -> str:
+        # A espera padrão (que pode dar timeout cego se o seletor oculto do Google mudar)
         finalizou = self._aguardar_fim_analise(timeout=timeout)
         
+        # =========================================================================
+        # 🛡️ INTERVENÇÃO DO HUNTER (SELF-HEALING) ANTES DO REFRESH
+        # =========================================================================
+        if not finalizou:
+            _log("⚠️ Timeout na espera padrão. Acionando Hunter para verificar falso-positivo...")
+            
+            # Tenta achar o botão de enviar ou o campo de texto (indicadores de que o Gemini parou de escrever)
+            # Usa os atributos de acessibilidade da classe caso existam
+            driver_med = getattr(self, 'driver_acessibilidade', None)
+            url_med = getattr(self, 'url_gemini_acessibilidade', None)
+            
+            ui_ociosa = cacar_elemento_universal(
+                driver=self.driver,
+                chave_memoria="gemini_ui_ociosa",
+                descricao_para_ia="Input de texto ou botão de envio de prompt que fica habilitado quando a IA termina de responder",
+                seletores_rapidos=["//button[@aria-label='Send message']", "//div[@role='textbox']", "//rich-textarea"],
+                palavras_semanticas=["enviar", "send", "digite", "type", "mensagem", "message"],
+                permitir_autocura=True,
+                driver_acessibilidade=driver_med,
+                url_gemini=url_med,
+                etapa="GEMINI_MONITORAMENTO"
+            )
+            
+            if ui_ociosa:
+                _log("🎯 Hunter confirmou que a UI está livre. Falso timeout detectado e anulado!")
+                finalizou = True  # Cancela o F5, a resposta já está lá e pronta pra ser copiada!
+            else:
+                _log("🚨 Hunter também não encontrou a UI livre. A tela travou de verdade.")
+        # =========================================================================
+
         if not finalizou:
             # 📸 PRINT DE SEGURANÇA ANTES DO REFRESH
             salvar_print_debug(self.driver, "ESTADO_TELA_PRE_RECOVERY")
 
-            _log('⚠️ Timeout na UI detectado. Forçando F5 Recovery e reinício da etapa...')
+            _log('⚠️ Timeout confirmado na UI. Forçando F5 Recovery e reinício da etapa...')
             self.driver.refresh()
             time.sleep(3.0) # Tempo para o Chrome estabilizar pós-refresh
             self._superar_bloqueios_e_onboarding()
@@ -670,7 +714,6 @@ class GeminiAnunciosViaFlow:
         _log(f'Anexando arquivo: {caminho.name}')
         
         # 1. Chamar apenas se NÃO for headless (otimização de 0.5s)
-        # O Chrome Headless não dispara janelas do Windows, então podemos pular isso.
         is_headless = self.driver.capabilities.get('moz:headless') or 'headless' in str(self.driver.capabilities).lower()
         if not is_headless:
             from integrations.utils import forcar_fechamento_janela_windows
@@ -678,34 +721,80 @@ class GeminiAnunciosViaFlow:
 
         try:
             scroll_ao_fim(self.driver)
-            
+
+            # 🛡️ PROTOCOLO HUNTER: Mapeia quantos arquivos já existem antes de começar
+            xpath_remover = "//button[contains(@aria-label, 'Remover') or contains(@aria-label, 'Remove')]"
+            qtd_antes = len(self.driver.find_elements(By.XPATH, xpath_remover))
+
             # --- TENTATIVA DE INPUT DIRETO ---
             input_file = None
             try:
-                # Busca relâmpago: se já estiver no DOM, economiza todo o processo de clique
+                # ⚡ BUSCA RELÂMPAGO: Se o Gemini já deixou o input no DOM
                 input_file = self.driver.find_element(By.CSS_SELECTOR, 'input[type="file"]')
             except:
                 pass
 
             if not input_file:
-                # --- FALLBACK 1: BOTÃO PRINCIPAL ---
+                # --- FALLBACK 1: BOTÃO PRINCIPAL (USANDO HUNTER PARA BLINDAR) ---
                 seletores_mais = [
-                    'button[jslog*="188890"]', # JSLog é o mais rápido e estável (identificação interna)
+                    'button[aria-controls="upload-file-menu"]',
+                    'mat-icon[fonticon="add_2"]/ancestor::button',
+                    'button.upload-card-button',
+                    'button[jslog*="188896"]',
+                    'button[jslog*="188890"]',
                     'button[aria-label*="envio de arquivo"]', 
-                    'button[aria-label*="upload file menu"]'
+                    'button[aria-label*="upload file menu"]',
+                    'button[aria-label*="Fazer upload"]', # 🛡️ Adicionado para PT-BR
+                    'button[aria-label*="Anexar"]'        # 🛡️ Adicionado para PT-BR
                 ]
                 
-                for seletor in seletores_mais:
+                # 🚑 INTEGRAÇÃO SELF-HEALING: Tenta os seletores acima usando o Hunter Universal
+                btn = cacar_elemento_universal(
+                    driver=self.driver,
+                    chave_memoria="gemini_btn_mais_anexo",
+                    descricao_para_ia="O botão de '+' ao lado da caixa de texto no chat do Gemini, usado para fazer upload de imagens ou anexar arquivos.",
+                    seletores_rapidos=seletores_mais,
+                    # 🚨 CORREÇÃO CRÍTICA: Retirada a palavra 'mais' e 'add' que causavam cliques falsos em menus
+                    palavras_semanticas=['upload', 'anexar', 'arquivo', 'imagem'],
+                    permitir_autocura=True,
+                    driver_acessibilidade=getattr(self, 'driver_acessibilidade', None),
+                    url_gemini=getattr(self, 'url_gemini_acessibilidade', None),
+                    etapa="GEMINI_DIRETOR"
+                )
+
+                if btn:
                     try:
-                        btn = self.driver.find_element(By.CSS_SELECTOR, seletor)
-                        if btn.is_displayed():
+                        # Se o botão já está com a classe "close", o menu já abriu
+                        if btn.is_displayed() and "close" not in btn.get_attribute("class"):
+                            # Garante que o menu lateral (que abriu por engano) seja fechado com ESC
+                            from selenium.webdriver.common.action_chains import ActionChains
+                            from selenium.webdriver.common.keys import Keys
+                            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                            time.sleep(0.1)
+                            
                             js_click(self.driver, btn)
-                            break
-                    except: continue
+                            #_log(f'Botão de anexo acionado.')
+                            #time.sleep(0.1) 
+                            
+                            # SNIPER DE POPUP DE IMAGEM
+                            try:
+                                btn_agree = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="upload-image-agree-button"]')
+                                if btn_agree and btn_agree[0].is_displayed():
+                                    _log("🛡️ Popup de 'Política de Imagens' detectado após clique. Clicando em Agree...")
+                                    js_click(self.driver, btn_agree[0])
+                                    time.sleep(1.5) 
+                                    js_click(self.driver, btn)
+                                    _log("Re-clicando no botão de upload após aceitar as políticas.")
+                                    time.sleep(0.5)
+                            except:
+                                pass
+                        elif btn.is_displayed() and "close" in btn.get_attribute("class"):
+                            _log('Menu de upload já está aberto na tela.')
+                    except: 
+                        pass
 
                 # --- FALLBACK 2: BOTÃO DENTRO DO MODAL ---
                 try:
-                    # Reduzi o timeout do modal de 10s para 4s (ele abre rápido ou não abre)
                     btn_enviar = WebDriverWait(self.driver, 4).until(EC.element_to_be_clickable((
                         By.CSS_SELECTOR, 'button[data-test-id="local-images-files-uploader-button"]'
                     )))
@@ -714,7 +803,6 @@ class GeminiAnunciosViaFlow:
                     pass 
 
             # --- VALIDAÇÃO E INJEÇÃO ---
-            # Aqui é onde injetamos o caminho. Mantive os 10s para garantir que não dê erro de "não encontrado"
             input_file = self._encontrar_input_file_visivel_ou_oculto(timeout=10)
             
             self.driver.execute_script(
@@ -726,15 +814,14 @@ class GeminiAnunciosViaFlow:
             _log(f'Upload iniciado: {caminho.name}')
 
             # Limpeza rápida de menus abertos
+            from selenium.webdriver.common.action_chains import ActionChains
+            from selenium.webdriver.common.keys import Keys
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
             
-            is_video = caminho.suffix.lower() in ['.mov', '.mp4', '.avi', '.mkv', '.webm']
-            
-            # 2. Otimização do tempo de guarda:
-            # Imagem não precisa de 20s de estabilização. 10s é o suficiente após o arquivo entrar.
-            timeout_upload = 60 if is_video else 10 
-            self._aguardar_upload_estabilizar(timeout=timeout_upload, is_video=is_video)
-            
+            # 🚀 FIRE AND FORGET: Aceleração bruta sem esperar o carregamento visual da barra
+            time.sleep(0.1)
+            _log(f"✅ Arquivo '{caminho.name}' injetado na fila de upload.")
+
         except Exception as e:
             _log(f'🛡️ Falha Crítica no Fluxo de Anexo: {str(e).splitlines()[0]}')
             salvar_print_debug(self.driver, f"ERRO_ANEXO_{caminho.stem}")
@@ -790,15 +877,22 @@ class GeminiAnunciosViaFlow:
             fim = time.time() + 5
             while time.time() < fim:
                 scroll_ao_fim(self.driver)
-                botao = self._obter_botao_enviar()
+                # 🛠️ AJUSTE SELF-HEALING: Tenta obter o botão (na última tentativa do loop, permite IA)
+                permitir_ia = (time.time() > fim - 1) 
+                botao = self._obter_botao_enviar(permitir_ia=permitir_ia)
+                
                 if botao is not None:
                     botao_submit = botao
                     break
                 time.sleep(0.1)
 
             if botao_submit is None:
-                raise TimeoutException('Botao de envio nao ficou disponivel.')
-            
+                # Plano de Emergência: Se o botão sumiu de vez, tenta o Enter físico
+                _log("⚠️ Botão de envio não localizado. Tentando disparo via tecla ENTER...")
+                textarea.send_keys(Keys.ENTER)
+                # Definimos como True para tentar validar o esvaziamento abaixo
+                botao_submit = textarea 
+
             # === BLOQUEIO DE CONFIRMAÇÃO DE ENVIO ===
             # Clica no botão e espera até a caixa de texto ESVAZIAR
             tentativas_click = 0
@@ -808,7 +902,12 @@ class GeminiAnunciosViaFlow:
                 try:
                     js_click(self.driver,botao_submit)
                 except Exception:
-                    botao_submit.click()
+                    try: botao_submit.click()
+                    except: pass
+                
+                # 🛠️ PLANO C: Se for a conta Ultra ou persistir, forçamos o ENTER no textarea
+                if tentativas_click > 1:
+                    textarea.send_keys(Keys.ENTER)
                 
                 # Aguarda até 3 segundos para a caixa esvaziar após o clique
                 fim_esvaziamento = time.time() + 3
@@ -850,7 +949,7 @@ class GeminiAnunciosViaFlow:
                         for toast in toasts:
                             if toast.is_displayed():
                                 t_text = toast.text.lower()
-                                if "wrong" in t_text or "errado" in t_text or "error" in t_text or "tente" in t_text or "try again" in t_text:
+                                if any(word in t_text for word in ["wrong", "errado", "error", "tente", "try again"]):
                                     _log(f"⚠️ Erro na UI detectado ('{t_text[:30]}...'). Dando F5 e abortando...")
                                     salvar_print_debug(self.driver,"PROMPT_ERRO_SNACKBAR_F5")
                                     self.driver.refresh()
@@ -880,46 +979,64 @@ class GeminiAnunciosViaFlow:
             salvar_print_debug(self.driver,"PROMPT_ERRO_CRITICO")
             return f'ERRO: {msg_limpa}'
 
-    def avaliar_melhor_imagem_base(self, img_a: Path, img_b: Path, nome_produto: str, estilo_filmagem: str) -> Path:
-        """Pede ao Gemini para avaliar duas variações de Imagem Base e escolher a melhor."""
-        _log(f"Iniciando Teste A/B de Imagens: {img_a.name} vs {img_b.name}...")
-        
-        if "frontal" in estilo_filmagem.lower():
-            criterios = "Anatomia e rosto da modelo (rejeite imagens com rostos deformados, olhos tortos ou mãos derretidas segurando o produto)."
+    def avaliar_melhor_imagem_base(self, cand_a: Path, cand_b: Path, img_produto: Path, nome_produto: str, estilo: str) -> Path:
+        """Faz o upload do Produto Original + Variante A + Variante B e julga a fidelidade."""
+        from integrations.utils import _log, salvar_print_debug
+
+        _log(f"Iniciando Teste A/B de Imagens com Validação de Produto: {cand_a.name} vs {cand_b.name}...", "GEMINI-IA")
+        self.abrir_novo_chat_limpo()
+
+        self.anexar_arquivo_local(img_produto)
+        self.anexar_arquivo_local(cand_a)
+        self.anexar_arquivo_local(cand_b)
+
+        prompt_juri = (
+            f"Você é um Júri técnico avaliando imagens geradas para anuncio do produto \"{nome_produto}\"."
+            f" Recebi 3 imagens nesta ordem:\n"
+            f"IMAGEM 1: Produto Original — referencia absoluta de estrutura, formato, cor e detalhes.\n"
+            f"IMAGEM 2: Candidata A.\n"
+            f"IMAGEM 3: Candidata B.\n\n"
+
+            f"PASSO 1 — ELIMINACAO POR FALHA GRAVE (analise cada candidata separadamente)\n"
+            f"Desclassifique imediatamente qualquer candidata que apresentar ao menos UMA das falhas abaixo:\n\n"
+
+            f"FALHAS DE GERACAO (verifica primeiro — eliminacao imediata):\n"
+            f"- Candidata identica ou quase identica a Imagem 1 (produto sozinho, sem modelo, sem cenario)\n"
+            f"- Candidata sem presenca humana quando o estilo exige modelo ({estilo})\n"
+            f"- Candidata que claramente nao foi gerada — parece foto de produto de catalogo ou e-commerce\n\n"
+
+            f"FALHAS DE PRODUTO:\n"
+            f"- Produto com estrutura, formato ou cor visivelmente diferentes da Imagem 1\n"
+            f"- Pecas ou acessorios inventados que nao existem no produto original\n"
+            f"- Produto entortado, fundido ao cenario ou parcialmente ausente\n\n"
+
+            f"FALHAS DE ANATOMIA:\n"
+            f"- Maos, bracos ou pernas em excesso ou faltando\n"
+            f"- Dedos deformados, fundidos ou em numero errado\n"
+            f"- Corpo com proporcoes claramente distorcidas\n\n"
+
+            f"PASSO 2 — DESEMPATE (so se ambas passarem na eliminacao)\n"
+            f"Avalie qual candidata tem melhor qualidade de anuncio para o estilo \"{estilo}\":\n"
+            f"- Produto em destaque e bem iluminado\n"
+            f"- Composicao e enquadramento mais atrativos\n"
+            f"- Modelo com postura natural e confiante\n\n"
+
+            f"PASSO 3 — VEREDITO\n"
+            f"Se uma candidata foi eliminada no Passo 1, a outra vence automaticamente.\n"
+            f"Se ambas forem eliminadas, escolha a menos ruim.\n"
+            f"Responda APENAS neste formato exato, sem mais nada:\n"
+            f"VENCEDOR: A\n"
+            f"ou\n"
+            f"VENCEDOR: B"
+        )
+        resposta_ia = self.enviar_prompt(prompt_juri, timeout=120, aguardar_resposta=True)
+
+        if resposta_ia and "VENCEDOR: B" in resposta_ia.upper():
+            _log("Gemini escolheu a Variante B.", "GEMINI-IA")
+            return cand_b
         else:
-            criterios = "Anatomia das mãos (rejeite imagens com dedos extras, posições impossíveis, rostos, cabeças ou corpos visíveis)."
-
-        for tentativa in range(1, 4):
-            try:
-                self.abrir_novo_chat_limpo()
-                _log("Fazendo upload das duas candidatas...")
-                self.anexar_arquivo_local(img_a)
-                self.anexar_arquivo_local(img_b)
-                
-                prompt = PROMPT_JURI_TESTE_AB_IMAGEM_BASE.format(
-                    nome_produto=nome_produto,
-                    criterios_avaliacao=criterios
-                )
-                resposta = self.enviar_prompt(prompt, timeout=60, aguardar_resposta=True)
-                
-                if resposta == 'RECOVERY_TRIGGERED' or not resposta:
-                    _log("⚠️ Falha ao avaliar imagens, tentando novamente...")
-                    continue
-                
-                resposta_limpa = str(resposta).strip().upper()
-                if 'B' in resposta_limpa:
-                    _log(f"🏆 Gemini escolheu a Variante B ({img_b.name})!")
-                    return img_b
-                else:
-                    _log(f"🏆 Gemini escolheu a Variante A ({img_a.name})!")
-                    return img_a
-
-            except Exception as e:
-                _log(f"Erro na tentativa {tentativa} de avaliar Imagens: {e}")
-                time.sleep(2)
-                
-        _log("⚠️ Fallback: Escolhendo Variante A devido a falhas contínuas.")
-        return img_a
+            _log("Gemini escolheu a Variante A (ou fallback).", "GEMINI-IA")
+            return cand_a
 
     def contar_imagens_geradas(self) -> int:
         script_js = """
@@ -1391,6 +1508,7 @@ class GeminiAnunciosViaFlow:
 
         prompt_execucao = PROMPT_EXECUCAO_ROTEIRO.format(
             qtd_cenas=qtd_cenas,
+            qtd_cenas_menos_1=qtd_cenas - 1,
             nome_tipo_video=nome_tipo_video,
             texto_referencia_dinamico=texto_referencia_dinamico,
             nome_modelo=desc_nome_modelo,

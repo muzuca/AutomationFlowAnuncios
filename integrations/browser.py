@@ -14,7 +14,7 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 from config import Settings
-from integrations.utils import _log, obter_proxy_aleatorio
+from integrations.utils import _log, obter_proxy_aleatorio, registrar_pid_processo
 
 
 def criar_extensao_proxy(proxy_url: str, folder: str = "logs/proxy_ext") -> str | None:
@@ -138,57 +138,57 @@ def build_chrome_options(settings: Settings) -> Options:
     return options
 
 
-def create_driver(settings: Settings):
+def create_driver(settings: Settings, perfil_acessibilidade: bool = False):
     # Passamos a usar a função build_chrome_options
     options = build_chrome_options(settings)
     
     # ==========================================================
-    # CONFIGURAÇÕES HEADLESS (MODO INVISÍVEL DINÂMICO)
+    # CONFIGURAÇÃO DE PERFIL REAL (UNIDADE MÉDICA)
+    # ==========================================================
+    if perfil_acessibilidade:
+        caminho_perfil = Path(os.getenv("CHROME_PROFILE_ACESS_DIR", "logs/perfil_acessibilidade")).resolve()
+        caminho_perfil.mkdir(parents=True, exist_ok=True)
+        options.add_argument(f'--user-data-dir={str(caminho_perfil)}')
+        options.add_argument('--profile-directory=Default')
+        _log("🏥 Carregando Unidade Médica via PERFIL REAL (Sessão persistente).")
+    else:
+        # Se NÃO for acessibilidade, usamos o modo anônimo para o operador principal
+        options.add_argument('--incognito')
+        _log("🤖 Carregando Operador Principal via MODO INCOGNITO.")
+
+    # ==========================================================
+    # CONFIGURAÇÕES HEADLESS E OTIMIZAÇÃO
     # ==========================================================
     is_headless = str(settings.chrome_headless).lower() in ['true', '1', 'yes']
 
     if is_headless:
-        # O '=new' usa o novo motor do Chrome
         options.add_argument('--headless=new')
-        
-        # Force o tamanho Full HD:
         options.add_argument('--window-size=1920,1080')
-        
-        # Otimizações de memória
         options.add_argument('--disable-gpu')
-        
-        # Mascara o User-Agent
         options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
         options.add_argument("--disable-web-security")
         options.add_argument("--allow-running-insecure-content")
 
-    # Ambas configurações precisam dessas opções
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    
-    # --- BLINDAGEM ADICIONAL CONTRA ERRO 13 E RASTREAMENTO ---
-    options.add_argument('--incognito')
     options.add_argument('--disable-application-cache')
     options.add_argument('--disk-cache-size=0')
-    # ==========================================================
 
     # Inicializa o serviço silencioso
     service = Service(ChromeDriverManager().install())
     service.creation_flags = CREATE_NO_WINDOW
     
-    # Inicializa o driver (PURO SELENIUM)
+    # Inicializa o driver
     driver = webdriver.Chrome(service=service, options=options)
 
-    # ==========================================================
-    # WINDOW SIZE (SOLUÇÃO PARA HEADLESS)
-    # ==========================================================
-    # Coloque isso IMEDIATAMENTE após criar o driver para garantir 
-    # que o layout do Gemini/Flow não renderize em modo mobile.
+    # 📝 ANOTA O NÚMERO DA BESTA
+    registrar_pid_processo(driver.service.process.pid)
+
+    # Força tamanho da janela
     driver.set_window_size(1920, 1080)   
     
-    # --- 🛡️ AJUSTE DE DOWNLOAD CDP (OBRIGATÓRIO PARA HEADLESS/FLOW) ---
+    # Ajuste de Download CDP
     downloads_path = str(Path("logs/downloads").resolve())
-    
     if not os.path.exists(downloads_path):
         os.makedirs(downloads_path)
 
@@ -196,14 +196,12 @@ def create_driver(settings: Settings):
         'behavior': 'allow',
         'downloadPath': downloads_path
     })
-    # ------------------------------------------------------------------
 
-    # Comando mágico Anti-Detecção
+    # Anti-Detecção
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
     
-    # Define timeout curto
     driver.implicitly_wait(settings.chrome_implicit_wait)
     
     return driver

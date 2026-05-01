@@ -15,6 +15,10 @@ import re
 from pathlib import Path
 from datetime import datetime
 
+# 🚨 IMPORTANTE: Importa e executa a limpeza ANTES de qualquer outro import do projeto
+from integrations.utils import limpar_cache_python
+limpar_cache_python()
+
 from acesso_humble import executar_sincronizacao
 from anuncios.processor import describe_task, get_next_pending_task, prepare_task
 # ADICIONADO: Captura de exceção específica de anexo
@@ -22,7 +26,7 @@ from selenium.common.exceptions import TimeoutException
 from config import get_settings
 from integrations.browser import close_driver, create_driver
 from integrations.gemini import GeminiAnunciosViaFlow
-from integrations.google_login import login_google, open_gemini
+from integrations.google_login import garantir_medico_vivo, inicializar_medico_seguro, login_google, open_gemini
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry, fechar_popup_cromado_pos_gemini
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
@@ -41,16 +45,20 @@ from integrations.utils import (
     salvar_bloco_unificado,
     extrair_e_salvar_legenda,
     salvar_ultima_conta_env,
-    limpar_logs_antigos
+    limpar_logs_antigos,
+    limpar_meus_zumbis
 )
 
 def main() -> None:
     setup_logging()
 
+    # 🚀 LIMPEZA DE SEGURANÇA (Só o que é nosso)
+    limpar_meus_zumbis()
+
     try:
         log_step('🚀 INICIANDO MODO WATCHER (MONITORAMENTO 24/7)')
         log_step('ETAPA 1: sincronizando credenciais HUMBLE iniciais')
-        executar_sincronizacao()
+        #executar_sincronizacao()
         log_success('Credenciais prontas')
         
         limpar_diretorio_visao()
@@ -64,7 +72,7 @@ def main() -> None:
         while True:
             try:
                 settings = get_settings()
-
+                
                 # LIMPEZA DO LOG COM BASE NO .ENV
                 limpar_logs_antigos(settings.log_retention_hours)
                 
@@ -75,7 +83,7 @@ def main() -> None:
                 fonte_imagem = os.getenv("IMAGE_GENERATOR_SOURCE", "GEMINI").upper() # NOVO: GEMINI OU FLOW
                 diretorio_anuncios_raiz = Path(os.getenv("ANUNCIOS_DIR", "G:/Meu Drive/Anuncios"))
                 
-                task = get_next_pending_task(settings.products_base_dir)
+                task = get_next_pending_task(settings.products_dir)
             except Exception as e_watcher:
                 # SE O DRIVE PISCAR (G:\ sumir), O ROBÔ CAI AQUI, ESPERA 15s E TENTA DE NOVO.
                 if not em_espera:
@@ -111,7 +119,7 @@ def main() -> None:
             # --- NOVA LÓGICA DE SINCRONIZAÇÃO A CADA TAREFA ---
             log_step('🔄 Sincronizando credenciais HUMBLE frescas para esta tarefa...')
             try:
-                executar_sincronizacao()
+                #executar_sincronizacao()
                 settings = get_settings() # Recarrega as contas fresquinhas do .env atualizado
                 log_success('Credenciais atualizadas com sucesso.')
             except Exception as e:
@@ -139,6 +147,7 @@ def main() -> None:
                         break
                         
             falhas_consecutivas = 0
+            contas_esgotadas = 0
 
             # =========================================================================
             # O LOOP DE TITÂNIO DA TAREFA: Roda alternando as contas até a tarefa atual dar certo
@@ -146,10 +155,11 @@ def main() -> None:
             while not sucesso_absoluto_tarefa:
                 
                 # Se todas as contas da fila falharem, roda o bot pra atualizar a planilha
-                if falhas_consecutivas > 0 and falhas_consecutivas >= len(accounts):
+                if contas_esgotadas > 0 and contas_esgotadas >= len(accounts):
                     log_error("🚨 TODAS as contas do rodízio atual falharam para esta tarefa! Reciclando contas...")
                     try:
-                        executar_sincronizacao()
+                        #executar_sincronizacao()
+                        return
                     except Exception as e:
                         log_error(f"Erro ao ressincronizar contas: {e}")
                     
@@ -161,12 +171,27 @@ def main() -> None:
                     
                     tentativa_atual = 0
                     falhas_consecutivas = 0
+                    contas_esgotadas = 0
                     salvar_ultima_conta_env(accounts[0].email)
 
                 # Define qual será o e-mail da vez
                 idx_conta = tentativa_atual % len(accounts)
                 account = accounts[idx_conta]
                 
+                # --- 🚀 MUDANÇA 1: LIMITE DE TENTATIVAS DINÂMICO ---
+                # Se for a conta Ultra (index 0), o robô tenta 5 vezes antes de rodar para a conta 1.
+                # Se for qualquer outra conta (Humble), mantém a falha rápida (1 tentativa).
+                limite_master = int(os.getenv("TENTATIVAS_CONTA_ULTRA", 10))
+                limite_nesta_conta = limite_master if idx_conta == 0 else 1
+                
+                if falhas_consecutivas >= limite_nesta_conta:
+                    log_error(f"⚠️ Limite de {limite_nesta_conta} falha(s) atingido para {account.email}. Rotacionando...")
+                    tentativa_atual += 1
+                    falhas_consecutivas = 0
+                    contas_esgotadas += 1
+                    continue
+                # --------------------------------------------------
+
                 log_step(f"▶ INICIANDO TENTATIVA {falhas_consecutivas + 1} | Conta [{idx_conta}]: {account.email}")
 
                 driver = None
@@ -174,13 +199,22 @@ def main() -> None:
                     log_step('Preparando ambiente e navegador...')
                     driver = create_driver(settings)
                     
+                    # 🚨 LOGIN AGORA SEM O DRIVER DE ACESSIBILIDADE
                     login_google(driver, settings, account)
                     dismiss_chrome_native_popup_with_retry(driver)
                     
                     # --- CONFIGURAÇÃO DA IA ---
                     salvar_ultima_conta_env(account.email)
                     url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app/pt')
-                    gemini = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=40)
+
+                    # 🚨 DRIVERS DE ACESSIBILIDADE REMOVIDOS AQUI TAMBÉM
+                    gemini = GeminiAnunciosViaFlow(
+                        driver, 
+                        url_gemini=url_gem, 
+                        timeout=40,
+                        driver_acessibilidade=None,         
+                        url_gemini_acessibilidade=None
+                    )    
 
                     # ACIONAMENTO DO TANQUE: Aqui ele vai abrir, checar bloqueios e usar o trator
                     gemini.abrir_gemini() 
@@ -215,32 +249,49 @@ def main() -> None:
                                 log_success('IA classificou os arquivos e extraiu os dados!')
                                 mapa_arquivos = {f.name.lower(): f for f in arquivos_brutos}
 
-                                # 1. Renomeia os arquivos focando SÓ no nome base, ignorando extensões
+                                # 1. Renomeia os arquivos focando SÓ no nome base
                                 def renomear_seguro(chave_json, prefixo):
+                                    # Pega o nome do arquivo que a IA sugeriu para essa categoria
                                     nome_ia = str(dados_ia.get(chave_json, "")).strip().lower()
-                                    if not nome_ia:
+                                    if not nome_ia or nome_ia == "none" or nome_ia == "não lido":
                                         return
                                     
-                                    base_ia = Path(nome_ia).stem 
+                                    # Extrai apenas o "corpo" do nome (ex: img_6607)
+                                    base_ia = Path(nome_ia).stem.lower() 
                                     
                                     for nome_real, arq_obj in list(mapa_arquivos.items()):
                                         base_real = arq_obj.stem.lower()
-                                        if base_ia == base_real or base_ia in base_real:
-                                            if not arq_obj.name.startswith(prefixo):
-                                                novo_nome = f"{prefixo}_{arq_obj.name}"
-                                                novo_caminho = arq_obj.parent / novo_nome
-                                                arq_obj.rename(novo_caminho)
+                                        
+                                        # Comparação flexível: se o nome da IA está no nome real ou vice-versa
+                                        if base_ia == base_real or base_ia in base_real or base_real in base_ia:
+                                            # Se já tiver o prefixo, não faz nada
+                                            if arq_obj.name.startswith(prefixo):
+                                                break
                                                 
+                                            novo_nome = f"{prefixo}_{arq_obj.name}"
+                                            novo_caminho = arq_obj.parent / novo_nome
+                                            
+                                            try:
+                                                arq_obj.rename(novo_caminho)
                                                 log_success(f'Arquivo renomeado: {arq_obj.name} -> {novo_nome}')
                                                 
+                                                # Atualiza o mapa para as próximas renomeações não se perderem
                                                 mapa_arquivos[novo_nome.lower()] = Path(novo_caminho)
-                                                del mapa_arquivos[nome_real]
-                                            break
+                                                if nome_real in mapa_arquivos:
+                                                    del mapa_arquivos[nome_real]
+                                                break # Achou e renomeou, sai do loop interno
+                                            except Exception as e:
+                                                log_error(f"Erro físico ao renomear {arq_obj.name}: {e}")
 
+                                # --- 🛡️ EXECUÇÃO DAS RENOMEAÇÕES ---
+                                # Aqui batemos as chaves que a IA costuma cuspir no JSON
                                 renomear_seguro('arquivo_produto', 'Base_Produto')
                                 renomear_seguro('arquivo_preco', 'Ref_Preco')
+                                
+                                # Tenta as duas variações de chave de referência para não ter erro
+                                renomear_seguro('referencia_extra', 'Ref_Extra')
                                 renomear_seguro('arquivo_referencia', 'Ref_Extra')
-
+                                
                                 # 2. Salva o TXT com a riqueza de detalhes
                                 conteudo_txt = (
                                     f"NOME_REAL: {dados_ia.get('nome_produto', 'Não lido')}\n"
@@ -256,7 +307,6 @@ def main() -> None:
 
                     # 3. Injeta os dados riquíssimos do TXT direto na variável da Tarefa
                     # 3.1. Primeiro você estabiliza qual é a tarefa definitiva e prepara os assets
-                    task = get_next_pending_task(settings.products_base_dir)
                     prepared = prepare_task(task)
                     log_success(describe_task(prepared.task))
 
@@ -369,6 +419,11 @@ def main() -> None:
 
                             # Finge sucesso absoluto para quebrar o loop de tentativas e não penalizar a conta
                             sucesso_absoluto_tarefa = True 
+
+                            # 🚀 RESPIRO DE SEGURANÇA PARA O GOOGLE NÃO PEGAR NO PÉ (CAPTCHA)
+                            _log("Aguardando 15 segundos para limpeza de sessão no Google...", "SISTEMA")
+                            time.sleep(15)
+
                             continue # Pula para o 'finally', fecha o navegador e o Watcher puxa a próxima pasta
                             # ------------------------------------------------
 
@@ -425,7 +480,12 @@ def main() -> None:
                             log_step(f'Gerando Imagem Base para {sufixo_rot}...')
                             if fonte_imagem == "FLOW":
                                 url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
-                                flow_bot_img = GoogleFlowAutomation(driver, url_flow=url_flw)
+                                flow_bot_img = GoogleFlowAutomation(
+                                    driver, 
+                                    url_flow=url_flw,
+                                    driver_acessibilidade=None,     
+                                    url_gemini_acessibilidade=None 
+                                )
                                 
                                 # --- BUSCA DE IDENTIDADE (MODELO) VIA .ENV ---
                                 path_task = Path(prepared.task.folder_path)
@@ -446,63 +506,85 @@ def main() -> None:
                                 pasta_estilo = estilo_filmagem_pasta.lower()
                                 url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
 
-                                # --- ETAPA IA: DIRETOR DE ARTE GERANDO PROMPTS A/B ---
-                                log_step(f"ETAPA IA: Diretor de Arte criando prompts para cena {estilo_filmagem_pasta}...")
+                                # =========================================================================
+                                # 🚀 CHECKPOINT MESTRE: DIRETOR DE ARTE (NUNCA MAIS PERDE O PROMPT)
+                                # =========================================================================
+                                caminho_prompts_ab = pasta_task / f"Prompts_Diretor_{sufixo_rot}.txt"
+                                prompt_a = ""
+                                prompt_b = ""
+                                precisa_gerar_prompts = True
                                 
-                                # Fallback estático caso o Gemini caia
-                                prompt_a = f"Using reference images, create an ultra realistic {estilo_filmagem_pasta} vertical image of {nome_prod}."
-                                prompt_b = prompt_a + " Different angle, subtle dynamic lighting shift."
-                                
-                                try:
-                                    # 1. Abre/Limpa o chat no Gemini para atuar como Diretor de Arte
-                                    gemini_diretor = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
-                                    gemini_diretor.abrir_gemini()
-                                    gemini_diretor.abrir_novo_chat_limpo() 
-                                    
-                                    # 2. Anexa as imagens de referência para a IA analisar
-                                    gemini_diretor.anexar_arquivo_local(primeira_imagem) # Produto
-                                    if cam_modelo_param and cam_modelo_param.exists():
-                                        gemini_diretor.anexar_arquivo_local(cam_modelo_param) # Modelo
-                                        
-                                    # 3. Prepara a instrução do Diretor
-                                    prompt_diretor = PROMPT_DIRETOR_DE_ARTE_IMAGEM.format(
-                                        nome_produto=nome_prod,
-                                        tipo_cena=estilo_filmagem_pasta
-                                    )
-                                    
-                                    # 📸 PRINT 1: Validação dos anexos e estado antes do envio
-                                    salvar_print_debug(driver, f"DIRETOR_ARTE_01_ANEXOS_CARREGADOS_{sufixo_rot}")
-                                    
-                                    # 4. Envia e captura a resposta
-                                    resposta_ia = gemini_diretor.enviar_prompt(prompt_diretor, timeout=60, aguardar_resposta=True)
-                                    
-                                    # 📸 PRINT 2: Validação visual da resposta gerada
-                                    salvar_print_debug(driver, f"DIRETOR_ARTE_02_RESPOSTA_GERADA_{sufixo_rot}")
-                                    
-                                    if resposta_ia and resposta_ia not in ['RECOVERY_TRIGGERED', 'TIMEOUT', 'SEM_RESPOSTA_UTIL', 'ERRO_F5']:
-                                        # Extrai o texto limpo da IA
-                                        prompt_limpo = resposta_ia.replace("```json", "").replace("```", "").strip()
-                                        prompt_a = prompt_limpo
-                                        prompt_b = prompt_a + " Subtle dynamic lighting shift, extremely detailed."
-                                        
-                                        # 📝 LOG VISUAL NO TERMINAL
-                                        print("\n" + "="*60)
-                                        print(f"🎬 PROMPTS DO DIRETOR DE ARTE ({sufixo_rot})")
-                                        print("="*60)
-                                        print(f"🟢 VARIANTE A:\n{prompt_a}\n")
-                                        print(f"🔵 VARIANTE B:\n{prompt_b}")
-                                        print("="*60 + "\n")
-                                            
-                                        log_success("Prompts A e B gerados com sucesso!")
-                                    else:
-                                        raise Exception("Resposta inválida do Gemini Diretor de Arte.")
-                                        
-                                except Exception as e:
-                                    if "SWITCH_ACCOUNT" in str(e): raise e
-                                    salvar_print_debug(driver, f"DIRETOR_ARTE_ERRO_CRITICO_{sufixo_rot}")
-                                    log_error(f"Falha no Diretor de Arte. Usando fallback estático. Erro: {e}")
-                                # --- FIM DA ETAPA IA ---
+                                if caminho_prompts_ab.exists():
+                                    try:
+                                        conteudo_prompts = caminho_prompts_ab.read_text(encoding='utf-8')
+                                        if "=== PROMPT B ===" in conteudo_prompts:
+                                            prompt_a = conteudo_prompts.split("=== PROMPT B ===")[0].replace("=== PROMPT A ===", "").strip()
+                                            prompt_b = conteudo_prompts.split("=== PROMPT B ===")[1].strip()
+                                            log_success(f"🚀 CHECKPOINT ALCANÇADO: Prompts carregados do arquivo {caminho_prompts_ab.name}. Pulando Gemini!")
+                                            precisa_gerar_prompts = False
+                                    except Exception as e:
+                                        log_error(f"Erro ao ler checkpoint dos prompts: {e}")
 
+                                if precisa_gerar_prompts:
+                                    log_step(f"ETAPA IA: Diretor de Arte criando prompts para cena {estilo_filmagem_pasta}...")
+                                    try:
+                                        gemini_diretor = GeminiAnunciosViaFlow(
+                                            driver, 
+                                            url_gemini=url_gem, 
+                                            timeout=300, 
+                                            driver_acessibilidade=None,          
+                                            url_gemini_acessibilidade=None
+                                        )                                     
+                                        gemini_diretor.abrir_gemini()
+                                        sucesso_diretor = False
+                                        
+                                        for tentativa_dir in range(1, 4):
+                                            try:
+                                                log_step(f"🔄 Retentativa interna {tentativa_dir}/3 do Diretor de Arte...")
+                                                gemini_diretor.abrir_novo_chat_limpo() 
+                                                
+                                                if cam_modelo_param and cam_modelo_param.exists():
+                                                    _log("Anexando MODELO primeiro...", "GEMINI-IA")
+                                                    gemini_diretor.anexar_arquivo_local(cam_modelo_param)
+                                                
+                                                _log("Anexando PRODUTO por último...", "GEMINI-IA")
+                                                gemini_diretor.anexar_arquivo_local(primeira_imagem)
+                                                    
+                                                prompt_instrucao = PROMPT_DIRETOR_DE_ARTE_IMAGEM.format(
+                                                    nome_produto=nome_prod,
+                                                    tipo_cena=estilo_filmagem_pasta
+                                                )
+                                                
+                                                resposta_ia = gemini_diretor.enviar_prompt(prompt_instrucao, timeout=300, aguardar_resposta=True)
+                                                
+                                                if resposta_ia and resposta_ia not in ['RECOVERY_TRIGGERED', 'TIMEOUT', 'SEM_RESPOSTA_UTIL', 'ERRO_F5']:
+                                                    texto_diretor = resposta_ia.replace("```json", "").replace("```", "").strip()
+                                                    
+                                                    match_a = re.search(r'(VARIANTE\s*A:.*?)(?=VARIANTE\s*B:|$)', texto_diretor, re.IGNORECASE | re.DOTALL)
+                                                    prompt_a = match_a.group(1).strip() if match_a else texto_diretor
+                                                    
+                                                    match_b = re.search(r'(VARIANTE\s*B:.*)', texto_diretor, re.IGNORECASE | re.DOTALL)
+                                                    prompt_b = match_b.group(1).strip() if match_b else prompt_a + " Subtle dynamic lighting shift."
+                                                    
+                                                    # 💾 SALVA O ARQUIVO FÍSICO DO CHECKPOINT
+                                                    caminho_prompts_ab.write_text(f"=== PROMPT A ===\n{prompt_a}\n\n=== PROMPT B ===\n{prompt_b}", encoding='utf-8')
+                                                    
+                                                    log_success("✅ Prompts A e B gerados, separados e salvos no Checkpoint!")
+                                                    sucesso_diretor = True
+                                                    break
+                                                else:
+                                                    _log(f"⚠️ Resposta inútil do Gemini. Retentando...")
+                                            except Exception as e_dir:
+                                                if "SWITCH_ACCOUNT" in str(e_dir): raise e_dir
+                                                log_error(f"Erro no Diretor de Arte: {e_dir}")
+                                                
+                                        if not sucesso_diretor:
+                                            raise Exception("Falha total no Diretor de Arte após 3 tentativas.")
+                                    except Exception as e:
+                                        if "SWITCH_ACCOUNT" in str(e): raise e
+                                        raise Exception(f"Reiniciando tentativa: {e}")
+
+                                # A partir daqui o código continua o de sempre...
                                 try:
                                     pasta_tarefa = Path(prepared.task.folder_path)
                                     cand_a = pasta_tarefa / f"ImgCand_A_{sufixo_rot}.png"
@@ -511,19 +593,21 @@ def main() -> None:
                                     if cand_a.exists(): cand_a.unlink()
                                     if cand_b.exists(): cand_b.unlink()
                                     
-                                    # 1. Gera Variante A (Usando o PROMPT Dinâmico A)
+                                    # 🚀 AQUI TAMBÉM NO FLOW: MODELO ANTES DO PRODUTO 🚀
+                                    
+                                    # 1. Gera Variante A
                                     log_step(f"Gerando Imagem Base Variante A ({sufixo_rot}) no Flow...")
                                     flow_bot_img.gerar_imagem_base(
-                                        caminho_referencia=primeira_imagem,
+                                        caminho_referencia=primeira_imagem, # O método interno deve ser ajustado para anexar modelo antes
                                         prompt=prompt_a,
                                         caminho_saida=cand_a,
                                         caminho_modelo=cam_modelo_param 
                                     )
                                     
-                                    # 2. Gera Variante B (Usando o PROMPT Dinâmico B)
+                                    # 2. Gera Variante B
                                     log_step(f"Gerando Imagem Base Variante B ({sufixo_rot}) no Flow...")
                                     flow_bot_img.gerar_imagem_base(
-                                        caminho_referencia=primeira_imagem,
+                                        caminho_referencia=primeira_imagem, # O método interno deve ser ajustado para anexar modelo antes
                                         prompt=prompt_b,
                                         caminho_saida=cand_b,
                                         caminho_modelo=cam_modelo_param
@@ -531,12 +615,24 @@ def main() -> None:
                                     
                                     # 3. Avaliação no Gemini (Júri)
                                     log_step("Enviando Variantes para o Diretor de Arte (Gemini) escolher a melhor...")
-                                    gemini_juri = GeminiAnunciosViaFlow(driver, url_gemini=url_gem, timeout=60)
+                                    gemini_juri = GeminiAnunciosViaFlow(
+                                        driver, 
+                                        url_gemini=url_gem, 
+                                        timeout=60,
+                                        driver_acessibilidade=None,         
+                                        url_gemini_acessibilidade=None  
+                                    )
                                     gemini_juri.abrir_gemini()
                                     
-                                    # 🚨 CORREÇÃO MANTIDA: Pulo de conta se o anexo falhar no Júri
                                     try:
-                                        melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(cand_a, cand_b, nome_prod, estilo_filmagem_pasta)
+                                        # 🚨 ENVIANDO A FOTO ORIGINAL DO PRODUTO PARA O JÚRI COMPARAR
+                                        melhor_img_base = gemini_juri.avaliar_melhor_imagem_base(
+                                            cand_a=cand_a, 
+                                            cand_b=cand_b, 
+                                            img_produto=primeira_imagem,
+                                            nome_produto=nome_prod, 
+                                            estilo=estilo_filmagem_pasta
+                                        )
                                     except Exception as e:
                                         if "Timeout" in str(e) or "anexar" in str(e).lower():
                                             raise Exception(f"SWITCH_ACCOUNT: Falha anexo Júri na conta {account.email}")
@@ -589,7 +685,7 @@ def main() -> None:
                                     texto_roteiro_atual = bloco.strip()
 
                         if precisa_gerar_roteiro:
-                            log_step(f'ETAPA IA: Gerando roteiro para {sufixo_rot} ({r_idx}/{qtd_roteiros})...')
+                            log_step(f'ETAPA IA: Gerando roteiros para {sufixo_rot} ({r_idx}/{qtd_roteiros})...')
                             
                             arquivos_contexto = [imagem_base_flow]
                             if arquivo_preco:
@@ -609,35 +705,78 @@ def main() -> None:
                                     roteiros_anteriores=roteiros_anteriores_textos,
                                     tarefa_obj=prepared.task
                                 )
-                                roteiro_limpo = formatar_roteiro_limpo(roteiro_bruto)
+                                
+                                # Separa as duas variantes pelo marcador (permite espaços em branco)
+                                partes = re.split(r'===\s*VARIANTE\s*[12]\s*===', roteiro_bruto)
+                                
+                                # Fallback de segurança se o Gemini esquecer os marcadores
+                                if len(partes) >= 3:
+                                    variante_1 = partes[1].strip()
+                                    variante_2 = partes[2].strip()
+                                else:
+                                    _log("⚠️ Gemini esqueceu os separadores === VARIANTE ===. Tentando dividir no meio...")
+                                    meio = len(roteiro_bruto) // 2
+                                    variante_1 = roteiro_bruto[:meio].strip()
+                                    variante_2 = roteiro_bruto[meio:].strip()
+
+                                # 1. Extrai legenda de cada uma ANTES de formatar (ainda tem o bloco [Legenda])
+                                extrair_e_salvar_legenda(variante_1, caminho_legendas_unificado, f"{r_idx}A")
+                                extrair_e_salvar_legenda(variante_2, caminho_legendas_unificado, f"{r_idx}B")
+                                
+                                # 2. Só depois formata (remove o bloco [Legenda] do roteiro técnico)
+                                roteiro_1_limpo = formatar_roteiro_limpo(variante_1)
+                                roteiro_2_limpo = formatar_roteiro_limpo(variante_2)
+
+                                # =================================================================
+                                # 🚀 DEBUG VISUAL COMPLETO DO ROTEIRO GERADO PELO GEMINI
+                                # =================================================================
+                                print("\n" + "▼"*70)
+                                print(f"🔍 DEBUG - ROTEIROS GERADOS PELA IA (ROTEIRO {r_idx})")
+                                print("-" * 70)
+                                print(f"=== VARIANTE 1 ===\n{roteiro_1_limpo}\n")
+                                print(f"=== VARIANTE 2 ===\n{roteiro_2_limpo}")
+                                print("▲"*70 + "\n")
+                                
                             except Exception as e:
                                 if "Timeout" in str(e) or "anexar" in str(e).lower():
                                     raise Exception(f"SWITCH_ACCOUNT: Falha anexo roteiro na conta {account.email}")
                                 raise e
 
-                            # 🚨 SALVA NO ARQUIVO UNIFICADO
-                            salvar_bloco_unificado(caminho_roteiros_unificado, f"ROTEIRO {r_idx}", roteiro_limpo)
-                            texto_roteiro_atual = roteiro_limpo
-                            log_success(f'Roteiro {r_idx} gerado e anexado ao roteiros.txt')
+                            # 🚨 SALVA AS VARIANTES NO ARQUIVO UNIFICADO PARA REGISTRO
+                            salvar_bloco_unificado(caminho_roteiros_unificado, f"ROTEIRO {r_idx}_VARIANTE_1", roteiro_1_limpo)
+                            salvar_bloco_unificado(caminho_roteiros_unificado, f"ROTEIRO {r_idx}_VARIANTE_2", roteiro_2_limpo)
+                            
+                            log_success(f'Roteiro {r_idx} (Variantes 1 e 2) gerado e salvo no roteiros.txt')
                             salvar_ultima_conta_env(account.email)
 
-                        # Extrai a legenda e salva no arquivo unificado legendas.txt
-                        extrair_e_salvar_legenda(texto_roteiro_atual, caminho_legendas_unificado, r_idx)
-                        roteiros_anteriores_textos.append(texto_roteiro_atual)
+                        # Adiciona ao contexto global para o próximo loop (próxima foto de produto) não repetir ideias
+                        try:
+                            roteiros_anteriores_textos.append(roteiro_1_limpo + "\n" + roteiro_2_limpo)
+                        except: pass
 
                         # --- ETAPA FLOW: GERAÇÃO DE VARIANTES ---
                         log_step(f'ETAPA FLOW: Gerando {qtd_variantes} Variantes para {sufixo_rot}')
                         
-                        cenas = ler_e_separar_cenas(caminho_roteiros_unificado, num_roteiro=r_idx, qtd_cenas=qtd_cenas_anuncio)
-                        
-                        if not cenas:
-                            log_error(f"O arquivo roteiros.txt não retornou cenas válidas! Deletando lixo do Gemini...")
-                            caminho_roteiros_unificado.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
-                            raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
-                            
                         url_flw = getattr(settings, 'flow_url', 'https://labs.google/fx/pt/tools/flow')
                         
                         for v_idx in range(1, qtd_variantes + 1):
+                            
+                            # 🚨 MAPEAR QUAL ROTEIRO USAR NESTA VOLTA DO LOOP (1 OU 2)
+                            roteiro_atual = roteiro_1_limpo if v_idx == 1 else roteiro_2_limpo
+                            
+                            # Manda ler o sufixo exato (ex: VARIANTE_1) que já foi salvo lá em cima!
+                            sufixo_variante = f"VARIANTE_{v_idx}" 
+                            cenas = ler_e_separar_cenas(caminho_roteiros_unificado, num_roteiro=r_idx, qtd_cenas=qtd_cenas_anuncio, variante=sufixo_variante)
+                            
+                            # Fallback dinâmico caso a sua função nativa de cenas falhe
+                            if not cenas:
+                                cenas = [c.strip() for c in re.split(r'\[Cena\s*\d+[^\]]*\]', roteiro_atual) if len(c.strip()) > 10][:qtd_cenas_anuncio]
+
+                            if not cenas:
+                                log_error(f"O arquivo roteiros.txt não retornou cenas válidas! Deletando lixo do Gemini...")
+                                caminho_roteiros_unificado.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
+                                raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
+                            
                             nome_video_final = f"Video_R{r_idx}v{v_idx}.mp4"
                             # Salva LOCALMENTE primeiro na pasta de origem
                             caminho_final_1080 = Path(task.folder_path) / nome_video_final
@@ -650,41 +789,41 @@ def main() -> None:
                             driver.get("about:blank")
                             time.sleep(1)
                             
-                            flow_bot = GoogleFlowAutomation(driver, url_flow=url_flw)
+                            flow_bot = GoogleFlowAutomation(
+                                driver, 
+                                url_flow=url_flw,
+                                driver_acessibilidade=None,
+                                url_gemini_acessibilidade=None
+                            )
                             flow_bot.acessar_flow()
                             videos_cenas_parciais = []
                             
                             for c_idx, prompt_cena in enumerate(cenas, start=1):
-                                log_step(f"🎬 [DEBUG] Roteiro: {sufixo_rot} | Cena {c_idx} | Texto: {prompt_cena[:50]}...")
+                                log_step(f"🎬 [DEBUG] Roteiro: {sufixo_rot} | Variante {v_idx} | Cena {c_idx} | Texto: {prompt_cena[:50]}...")
                                 flow_bot.clicar_novo_projeto()
                                 flow_bot.configurar_parametros_video()
                                 
                                 if imagem_base_flow:
                                     flow_bot.anexar_imagem(imagem_base_flow)
                                 
-                                # No loop das cenas no main.py:
                                 sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
 
                                 if sucesso_geracao:
-                                    caminho_video = Path(task.folder_path) / f"temp_R{r_idx}v{v_idx}c{c_idx}.mp4"
+                                    tentativa_sufixo = f"_t{falhas_consecutivas}" if 'falhas_consecutivas' in locals() else "_t0"
+                                    caminho_video = Path(task.folder_path) / f"temp_R{r_idx}v{v_idx}c{c_idx}{tentativa_sufixo}.mp4"
+            
                                     if flow_bot.baixar_video_gerado(caminho_video):
                                         videos_cenas_parciais.append(caminho_video)
                                     else:
-                                        # Se falhou o download mas não foi erro visual, tenta de novo normalmente
                                         raise Exception(f'Falha download Cena {c_idx}')
                                 else:
-                                    # SE CAIR AQUI: Significa que enviar_prompt_e_aguardar retornou FALSE
-                                    # (Ou por erro visual detectado pela sua função nova, ou por timeout)
                                     log_error(f"❌ Falha crítica de geração na conta {account.email}. Trocando de conta...")
-                                    
-                                    # Este raise força o driver a fechar e o sistema a pegar o próximo e-mail da lista
                                     raise Exception(f'SWITCH_ACCOUNT: Falha visual ou timeout no Flow - Cena {c_idx}')
 
                             if len(videos_cenas_parciais) == len(cenas):
                                 var_720_temp = Path(task.folder_path) / f"temp_concat_R{r_idx}V{v_idx}.mp4"
                                 if concatenar_cenas_720p(videos_cenas_parciais, var_720_temp):
                                     
-                                    # 🚀 CONVERSÃO OBRIGATÓRIA PARA 1080P DE TODAS AS VARIANTES (SEM JÚRI)
                                     log_step(f"Realizando upscale local para 1080p: {nome_video_final}")
                                     if converter_para_1080p(var_720_temp, caminho_final_1080):
                                         log_success(f"✅ Vídeo convertido localmente: {nome_video_final}")
@@ -714,20 +853,44 @@ def main() -> None:
 
                 except Exception as exc:
                     log_error(f"Falha na execução: {str(exc)}")
-                    log_step("Encerrando driver e trocando de conta para próxima tentativa...")
+                    log_step("Encerrando driver e limpando rastros...")
+                    
+                    # 🚨 CONTROLE DE RETENTATIVAS
                     falhas_consecutivas += 1
-                    tentativa_atual += 1
+                    
+                    # Se o erro for SWITCH_ACCOUNT (ex: anexo falhou), pula pra próxima conta
+                    if "SWITCH_ACCOUNT" in str(exc):
+                        tentativa_atual += 1
+                        falhas_consecutivas = 0
+                        contas_esgotadas += 1
 
                 finally:
                     if driver:
+                        log_step("Encerrando navegador e limpando rastro de sessão...")
                         close_driver(driver)
                         driver = None
-                        
+                    
+                    # 🎯 GARANTE QUE NÃO SOBROU NENHUM PROCESSO DESTA TENTATIVA
+                    limpar_meus_zumbis()
+
+                    # 🚀 O LUGAR CERTO É AQUI:
+                    # 5 segundos de respiro garantidos após a morte total do Chrome
+                    time.sleep(5)
+
             # Fim do Loop da Tarefa (sucesso_absoluto_tarefa = True)
 
+    except KeyboardInterrupt:
+        log_step("🛑 Interrupção manual detectada (Watcher encerrado).")
     except Exception as exc:
-        log_error(f"Erro Crítico: {str(exc)}")
+        log_error(f"Erro Crítico no Watcher: {str(exc)}")
         input('Pressione ENTER para encerrar...')
+    finally:
+        # 🧹 FAXINA FINAL (Mata qualquer Chrome órfão antes de fechar o terminal)
+        limpar_meus_zumbis()
+        log_success("Sistema encerrado com segurança.")
+
+        # 5 segundos de respiro garantidos após a morte total do Chrome
+        time.sleep(5)
 
 if __name__ == '__main__':
     main()

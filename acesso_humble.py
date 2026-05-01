@@ -63,11 +63,17 @@ def _extrair_credenciais_do_documento(texto: str) -> list[tuple[str, str]]:
     return resultado
 
 def _remover_bloco_humble_env(conteudo: str) -> str:
-    """Remove apenas a seção de credenciais do .env, preservando configurações do topo."""
+    """Remove credenciais do .env, mas PRESERVA a conta 0 (Ultra)."""
     linhas_filtradas = []
     for linha in conteudo.splitlines():
-        if "# --- CREDENCIAIS HUMBLE" in linha: 
+        # Se achou o marcador de início do bloco sincronizado, para de ler o resto
+        if "# --- CREDENCIAIS HUMBLE (SINCRONIZADO" in linha: 
             break
+        # NÃO apaga se for a HUMBLE_EMAIL_0 ou PASSWORD_0
+        if re.match(r"^\s*HUMBLE_(EMAIL|PASSWORD)_0\s*=", linha):
+            linhas_filtradas.append(linha)
+            continue
+        # Apaga as outras (1 em diante)
         if re.match(r"^\s*HUMBLE_(EMAIL|PASSWORD)_\d+\s*=", linha): 
             continue
         linhas_filtradas.append(linha)

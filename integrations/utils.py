@@ -87,7 +87,7 @@ def salvar_print_debug(driver, nome_fase: str):
         driver.execute_script("""
             let debugDiv = document.getElementById('debug-url-overlay') || document.createElement('div');
             debugDiv.id = 'debug-url-overlay';
-            debugDiv.style = 'position:fixed;top:0;left:0;width:100%;z-index:999999;background:rgba(255,0,0,0.9);color:white;padding:10px;font-size:16px;font-weight:bold;text-align:center;';
+            debugDiv.style = 'position:fixed; top:0; left:20%; width:60%; z-index:999999; background:rgba(255,0,0,0.9); color:white; padding:5px 10px; font-size:14px; font-weight:bold; text-align:center; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; box-shadow: 0px 2px 5px rgba(0,0,0,0.5);';
             debugDiv.innerText = 'URL: ' + window.location.href;
             document.body.appendChild(debugDiv);
         """)
@@ -214,22 +214,40 @@ def limpar_residuos_proxy():
             _log(f"⚠️ Não foi possível limpar pasta de extensões: {e}")
 
 def formatar_roteiro_limpo(texto_bruto: str) -> str:
-    """Limpa lixo da UI do Gemini e força as quebras de linha para evitar colapso no flow.py"""
-    crases = chr(96) * 3
-    lixos = ["Show thinking Gemini said", "Show thinking", "Gemini said", f"{crases}text", crases, "PROMPT TÉCNICO:"]
+    # 1. Limpeza de lixos de interface
+    lixos = ["Show thinking", "Gemini said", "```text", "```", "PROMPT TÉCNICO:"]
     for lixo in lixos:
         texto_bruto = texto_bruto.replace(lixo, "")
-    
-    match_inicio = re.search(r'\[[Cc]ena\s*1', texto_bruto, re.IGNORECASE)
-    if match_inicio:
-        texto_bruto = texto_bruto[match_inicio.start():]
-        
-    texto_bruto = re.sub(r'(\[[Cc]ena\s*\d+)', r'\n\n\1', texto_bruto, flags=re.IGNORECASE)
-    texto_bruto = re.sub(r'(\[[Ll]egenda)', r'\n\n\1', texto_bruto, flags=re.IGNORECASE)
-    
-    texto_bruto = re.sub(r'\n{3,}', '\n\n', texto_bruto)
-    return texto_bruto.strip()
 
+    # 2. SEPARAÇÃO DA LEGENDA (Para não poluir o roteiros.txt)
+    # Busca a legenda para garantir que ela exista, mas removemos do roteiro técnico
+    padrao_legenda = re.compile(r'\[[Ll]egenda\](.*?)$|(?<=fast-paced\.)\s*([^\.\[]*?#.*)$', re.DOTALL | re.IGNORECASE)
+    match_legenda = padrao_legenda.search(texto_bruto)
+    
+    texto_sem_legenda = texto_bruto
+    if match_legenda:
+        # Remove a legenda do roteiro técnico (o que vai para o Flow)
+        texto_sem_legenda = texto_bruto[:match_legenda.start()].strip()
+
+    # 3. FORMATAÇÃO DE LEITURA (Enters entre frases técnicas)
+    # Lista de palavras-chave que devem SEMPRE começar em uma nova linha
+    quebras = [
+        "FIRST FRAME:", "LAST FRAME:", "CAMERA —", "RULES —", 
+        "ACTION SEQUENCE —", "NEGATIVE —", "VOICEOVER:", "AUDIO:"
+    ]
+    
+    for marcador in quebras:
+        # Substitui o marcador por ele mesmo com dois Enters antes, se não houver
+        texto_sem_legenda = re.sub(f'\\s*{re.escape(marcador)}', f'\n{marcador}', texto_sem_legenda)
+
+    # 4. LIMPEZA DE QUEBRAS EXCESSIVAS
+    # Garante que as cenas fiquem bem separadas
+    texto_sem_legenda = re.sub(r'(\[[Cc]ena\s*\d+)', r'\n\n\1', texto_sem_legenda)
+    
+    # Remove espaços duplos e garante parágrafos limpos
+    linhas = [linha.strip() for linha in texto_sem_legenda.split('\n') if linha.strip()]
+    
+    return '\n'.join(linhas).strip()
 
 def salvar_bloco_unificado(caminho_arquivo: Path, titulo_bloco: str, texto: str) -> None:
     """Salva de forma inteligente num arquivo único. Substitui o bloco se existir, ou anexa no final."""
@@ -246,21 +264,47 @@ def salvar_bloco_unificado(caminho_arquivo: Path, titulo_bloco: str, texto: str)
         
     caminho_arquivo.write_text(texto_final.strip() + "\n\n", encoding='utf-8')
 
+def extrair_e_salvar_legenda(texto_roteiro: str, caminho_arquivo: Path, num_roteiro: int) -> bool:
+    try:
+        legenda_completa = None
 
-def extrair_e_salvar_legenda(texto_limpo: str, caminho_legenda_unificada: Path, num_roteiro: int) -> None:
-    """Procura a tag da legenda no roteiro gerado e salva no arquivo unificado de legendas."""
-    match = re.search(r"\[[Ll]egenda.*?\](.*)", texto_limpo, re.IGNORECASE | re.DOTALL)
-    if match:
-        texto_legenda = match.group(1).strip()
-        marcadores_fim = ["1. EXEMPLO", "DIRETRIZ FINAL", "Confirme brevemente", "SISTEMA CALIBRADO", "[Cena"]
-        for marcador in marcadores_fim:
-            idx = texto_legenda.upper().find(marcador.upper())
-            if idx != -1:
-                texto_legenda = texto_legenda[:idx].strip()
-                
-        salvar_bloco_unificado(caminho_legenda_unificada, f"LEGENDA {num_roteiro}", texto_legenda)
-        _log(f'OK: Legenda extraída e salva no arquivo unificado (Legenda {num_roteiro}).', "SISTEMA")
+        # TENTATIVA PRINCIPAL: bloco [Legenda] gerado pelo Gemini
+        match = re.search(
+            r'\[[Ll]egenda\]\s*\n(.+?)(?=\n---|\Z)',
+            texto_roteiro,
+            re.DOTALL
+        )
+        if match:
+            legenda_completa = match.group(1).strip()
 
+        # FALLBACK: só usa VOICEOVERs se [Legenda] não existir
+        if not legenda_completa:
+            matches = re.findall(r'VOICEOVER:\s*"([^"]+)"', texto_roteiro, re.IGNORECASE)
+            if matches:
+                legenda_completa = " ".join(m.strip() for m in matches)
+
+        if legenda_completa:
+            bloco_salvar = f"=== LEGENDA {num_roteiro} ===\n{legenda_completa}\n\n"
+            if caminho_arquivo.exists():
+                conteudo_atual = caminho_arquivo.read_text(encoding='utf-8')
+                conteudo_atual = re.sub(
+                    rf'=== LEGENDA {num_roteiro} ===.*?(?==== LEGENDA|\Z)',
+                    '', conteudo_atual, flags=re.DOTALL
+                )
+                novo_conteudo = conteudo_atual.strip() + "\n\n" + bloco_salvar
+                caminho_arquivo.write_text(novo_conteudo.strip(), encoding='utf-8')
+            else:
+                caminho_arquivo.write_text(bloco_salvar.strip(), encoding='utf-8')
+
+            print(f"[SISTEMA] OK: Legenda {num_roteiro} extraída com sucesso.")
+            return True
+
+        print(f"[SISTEMA] ERRO: Legenda {num_roteiro} não encontrada.")
+        return False
+
+    except Exception as e:
+        print(f"[SISTEMA] ERRO fatal ao extrair legenda: {e}")
+        return False
 
 def salvar_ultima_conta_env(email: str) -> None:
     """Atualiza ou insere a variável LAST_ACCOUNT_INDEX no arquivo .env com o EMAIL da conta"""
@@ -323,3 +367,58 @@ def limpar_logs_antigos(horas: int = 12) -> None:
 
     except Exception:
         pass
+
+def remover_caracteres_nao_bmp(texto: str) -> str:
+    """
+    Remove emojis e caracteres suplementares (fora do padrão BMP) 
+    que causam crash no send_keys do ChromeDriver, mas preserva
+    a formatação original do texto (quebras de linha, acentos, etc).
+    """
+    if not texto:
+        return texto
+    
+    # Esta Regex procura especificamente a faixa alta onde vivem os emojis 
+    # e outros caracteres problemáticos para o Selenium, sem tocar no texto normal.
+    padrao_emoji = re.compile(r'[\U00010000-\U0010ffff]', flags=re.UNICODE)
+    
+    return padrao_emoji.sub('', texto)
+
+def registrar_pid_processo(pid: int):
+    """Guarda o ID do Chrome para extermínio futuro."""
+    try:
+        with open("meus_pids.txt", "a") as f:
+            f.write(f"{pid}\n")
+    except: pass
+
+def limpar_meus_zumbis():
+    """Lê o arquivo de PIDs e mata apenas os processos que este sistema criou."""
+    import os
+    from pathlib import Path
+    arquivo_pids = Path("meus_pids.txt")
+    if not arquivo_pids.exists():
+        return
+
+    with open(arquivo_pids, "r") as f:
+        pids = set(f.read().splitlines()) # Set para evitar duplicados
+
+    for pid in pids:
+        if pid.strip():
+            try:
+                # /T mata a árvore de processos (Chrome + abas)
+                os.system(f"taskkill /f /pid {pid} /T >nul 2>&1")
+            except: pass
+    
+    arquivo_pids.unlink(missing_ok=True)
+
+def limpar_cache_python():
+    """Remove pastas __pycache__ recursivamente para evitar execução de código fantasma."""
+    import shutil
+    from pathlib import Path
+    
+    projeto_raiz = Path(__file__).parent.parent # Ajuste conforme a profundidade do arquivo
+    for pycache in projeto_raiz.rglob("__pycache__"):
+        try:
+            shutil.rmtree(pycache)
+            # print(f"🧹 Cache limpo: {pycache}")
+        except:
+            pass
