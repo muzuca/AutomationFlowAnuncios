@@ -67,6 +67,19 @@ def main() -> None:
         em_espera = False
 
         # =========================================================================
+        # 🏥 PRÉ-VOO: VALIDAR UNIDADE MÉDICA
+        # =========================================================================
+        settings = get_settings()
+        if settings.accounts:
+            # Pega a conta designada para ser a médica (ex: a última da lista ou uma específica do seu .env)
+            conta_medica = settings.accounts[-1] 
+            from integrations.google_login import realizar_checkup_medico_pre_voo
+            realizar_checkup_medico_pre_voo(settings, conta_medica)
+        else:
+            log_error("Sem contas para inicializar a Unidade Médica!")
+            sys.exit(1)
+
+        # =========================================================================
         # O LOOP DE ESCUTA INFINITA: Fica rodando 24/7 monitorando as pastas
         # =========================================================================
         while True:
