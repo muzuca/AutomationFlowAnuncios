@@ -509,7 +509,7 @@ def main() -> None:
                                 # =========================================================================
                                 # 🚀 CHECKPOINT MESTRE: DIRETOR DE ARTE (NUNCA MAIS PERDE O PROMPT)
                                 # =========================================================================
-                                caminho_prompts_ab = pasta_task / f"Prompts_Diretor_{sufixo_rot}.txt"
+                                caminho_prompts_ab = pasta_task / f"prompts_diretor_{sufixo_rot}.txt"
                                 prompt_a = ""
                                 prompt_b = ""
                                 precisa_gerar_prompts = True
@@ -800,13 +800,36 @@ def main() -> None:
                             
                             for c_idx, prompt_cena in enumerate(cenas, start=1):
                                 log_step(f"🎬 [DEBUG] Roteiro: {sufixo_rot} | Variante {v_idx} | Cena {c_idx} | Texto: {prompt_cena[:50]}...")
-                                flow_bot.clicar_novo_projeto()
-                                flow_bot.configurar_parametros_video()
                                 
-                                if imagem_base_flow:
-                                    flow_bot.anexar_imagem(imagem_base_flow)
-                                
-                                sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
+                                sucesso_geracao = False
+                                for tentativa_projeto in range(1, 4):
+                                    try:
+                                        flow_bot.clicar_novo_projeto()
+                                        flow_bot.configurar_parametros_video()
+                                        
+                                        if imagem_base_flow:
+                                            flow_bot.anexar_imagem(imagem_base_flow)
+                                        
+                                        sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
+        
+                                        if sucesso_geracao:
+                                            break
+                                        else:
+                                            log_error(f"⚠️ Tentativa {tentativa_projeto} de 3 falhou no Flow. Tentando novo projeto...")
+                                            driver.refresh()
+                                            time.sleep(5)
+                                            flow_bot.acessar_flow()
+                                            flow_bot._projeto_criado = False
+                                            flow_bot._modelo_configurado = False
+                                            flow_bot._imagem_upada = False
+                                    except Exception as e:
+                                        log_error(f"⚠️ Erro ao tentar gerar cena {c_idx} no projeto (Tentativa {tentativa_projeto}): {e}")
+                                        driver.refresh()
+                                        time.sleep(5)
+                                        flow_bot.acessar_flow()
+                                        flow_bot._projeto_criado = False
+                                        flow_bot._modelo_configurado = False
+                                        flow_bot._imagem_upada = False
 
                                 if sucesso_geracao:
                                     tentativa_sufixo = f"_t{falhas_consecutivas}" if 'falhas_consecutivas' in locals() else "_t0"
@@ -817,7 +840,7 @@ def main() -> None:
                                     else:
                                         raise Exception(f'Falha download Cena {c_idx}')
                                 else:
-                                    log_error(f"❌ Falha crítica de geração na conta {account.email}. Trocando de conta...")
+                                    log_error(f"❌ Falha crítica de geração na conta {account.email} após 3 tentativas de projetos. Trocando de conta...")
                                     raise Exception(f'SWITCH_ACCOUNT: Falha visual ou timeout no Flow - Cena {c_idx}')
 
                             if len(videos_cenas_parciais) == len(cenas):

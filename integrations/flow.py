@@ -1114,6 +1114,8 @@ class GoogleFlowAutomation:
                     # Usa seu sistema de tracking de progresso inline (barra de % no terminal)
                     if getattr(self, '_aguardar_geracao_tracking_inline', lambda p, t: False)(prompt_linear, timeout_geracao):
                         return True
+                    else:
+                        return False # Falhou na geração, aborta a tentativa local para o main.py recriar o projeto.
                 
             except Exception as e:
                 _log(f'Erro na tentativa local {tentativa_local}: {str(e)[:100]}')
