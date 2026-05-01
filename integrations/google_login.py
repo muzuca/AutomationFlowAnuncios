@@ -376,75 +376,63 @@ def garantir_medico_vivo(driver_medico: WebDriver | None, settings: Settings, ur
     # Cria um novo driver usando a lógica robusta já existente
     return inicializar_medico_seguro(settings, url_alvo)
 
-def realizar_checkup_medico_pre_voo(settings: Settings, conta_medica: GoogleAccount) -> None:
+def realizar_checkup_medico_pre_voo(settings: Settings) -> None:
     """
-    Faz um teste da Unidade Médica de forma visível antes do loop principal começar.
-    Se a máquina for nova, o usuário verá a tela e o robô fará o login e aceitará 
-    os termos do Gemini, salvando os cookies no perfil de acessibilidade.
+    PARA O SCRIPT e abre o perfil de acessibilidade de forma visível.
+    Objetivo: Permitir que o usuário faça o login manual e aceite os termos 
+    do Gemini/Google para salvar os cookies no perfil persistente.
     """
     from integrations.utils import _get_logs_dir, _log
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
     from webdriver_manager.chrome import ChromeDriverManager
-    from integrations.gemini import GeminiAnunciosViaFlow
     import sys
     import time
-    
-    _log("🏥 [PRE-FLIGHT] Iniciando Check-up preventivo da Unidade Médica (Modo Visível)...", "SISTEMA")
-    
-    driver_medico = None
+
+    _log("🏥 [PRE-FLIGHT] Iniciando configuração manual da Unidade Médica...", "SISTEMA")
+
+    driver_setup = None
     try:
-        # 1. Configura o Chrome VISÍVEL apontando para o perfil de acessibilidade
-        options_visivel = Options()
-        options_visivel.add_argument("--window-size=1200,900")
-        options_visivel.add_argument("--disable-blink-features=AutomationControlled")
-        options_visivel.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options_visivel.add_experimental_option("useAutomationExtension", False)
-        
+        # 1. Configura o Chrome VISÍVEL e aponta para a pasta de acessibilidade
+        options = Options()
+        options.add_argument("--window-size=1200,900")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+
         perfil_dir = _get_logs_dir() / "perfil_acessibilidade"
         perfil_dir.mkdir(parents=True, exist_ok=True)
-        options_visivel.add_argument(f"--user-data-dir={perfil_dir}")
-        
+        options.add_argument(f"--user-data-dir={perfil_dir}")
+
+        # 2. Lança o navegador e vai para o Gemini
         service = Service(ChromeDriverManager().install())
-        driver_medico = webdriver.Chrome(service=service, options=options_visivel)
+        driver_setup = webdriver.Chrome(service=service, options=options)
         
-        # 2. Faz login usando a sua função nativa de google_login
-        _log("Validando credenciais do perfil médico...", "CHECKUP")
-        try:
-            # Chama a função que já está no mesmo arquivo
-            login_google(driver_medico, settings, conta_medica)
-        except Exception as e:
-            _log(f"⚠️ Login médico precisou de intervenção ou deu alerta: {e}", "CHECKUP")
-            sys.stdout.write('\a') # Apita
-            input("\n👉 [AÇÃO MANUAL] Faça o login na tela do Chrome. Ao terminar, aperte ENTER aqui...")
-            
-        # 3. Abre o Gemini e força o aceite de termos
-        _log("Abrindo Gemini para quebrar telas de boas-vindas...", "CHECKUP")
         url_gemini = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
+        driver_setup.get(url_gemini)
+
+        # 3. BLOQUEIO TOTAL DO SCRIPT (Aguardando o humano)
+        sys.stdout.write('\a') # Beep de atenção
+        print("\n" + "!"*60)
+        print("👉 [AÇÃO MANUAL OBRIGATÓRIA]")
+        print("1. O navegador abriu de forma VISÍVEL.")
+        print("2. Faça o login na conta do Google que será a 'MÉDICA'.")
+        print("3. Aceite todos os termos, pop-ups e onbordering do Gemini.")
+        print("4. Mande um 'Oi' no chat só para garantir que está funcionando.")
+        print("!"*60)
         
-        gemini_bot = GeminiAnunciosViaFlow(driver_medico, url_gemini=url_gemini, timeout=30)
-        gemini_bot.abrir_gemini()
-        gemini_bot._forcar_modelo_pro()
-        
-        # 4. Envia um ping usando o método nativo para enviar prompt e aguardar texto
-        _log("Testando motor da IA...", "CHECKUP")
-        gemini_bot.abrir_novo_chat_limpo()
-        
-        resposta = gemini_bot.enviar_prompt("Olá. Teste de sistema. Responda apenas com a palavra 'OPERANTE'.", timeout=40)
-        
-        if resposta and "operante" in resposta.lower():
-            _log("🏥 Unidade Médica 100% OPERANTE e pronta para emergências!", "SISTEMA")
-        else:
-            _log(f"Aviso: IA respondeu de forma inesperada: {str(resposta)[:50]}", "CHECKUP")
-            
+        input("\n✅ APÓS ESTAR LOGADO E COM O CHAT LIBERADO, APERTE [ENTER] AQUI PARA CONTINUAR... ")
+
+        _log("Configuração concluída. Salvando perfil e fechando...", "SISTEMA")
+
     except Exception as e:
-        _log(f"🚨 FALHA CRÍTICA NO PRÉ-VOO MÉDICO: {e}", "ERRO")
-        _log("A Unidade Médica não conseguiu se estabilizar. Abortando sistema.", "ERRO")
-        sys.exit(1) # Mata o script inteiro porque sem médico o robô morre no CAPTCHA
+        _log(f"🚨 Erro durante o setup do médico: {e}", "ERRO")
+        sys.exit(1)
     finally:
-        if driver_medico:
-            _log("Fechando Chrome do check-up para salvar cookies...", "CHECKUP")
-            try: driver_medico.quit()
-            except: pass
-            time.sleep(3) # Tempo crítico pro Windows salvar a pasta do perfil antes do main.py rodar
+        if driver_setup:
+            try:
+                driver_setup.quit()
+            except:
+                pass
+            time.sleep(5) # Tempo de segurança para o Windows liberar os arquivos de lock da pasta
