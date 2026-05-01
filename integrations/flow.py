@@ -633,7 +633,7 @@ class GoogleFlowAutomation:
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
             return False
 
-    def _enviar_prompt_imagem_isolado(self, prompt: str, timeout_geracao: int = 60) -> bool:
+    def _enviar_prompt_imagem_isolado(self, prompt: str, timeout_geracao: int = 120) -> bool:
         """Digita o prompt e monitora falhas globais (Unusual Activity) na tela inteira."""
         import os
         import time
@@ -805,7 +805,7 @@ class GoogleFlowAutomation:
                     self._modelo_configurado = False
                     self.configurar_parametros_imagem()
                     
-                    if self._enviar_prompt_imagem_isolado(prompt, timeout_geracao=60):
+                    if self._enviar_prompt_imagem_isolado(prompt, timeout_geracao=120):
                         sucesso_absoluto = True
                         break # Sucesso na geração!
                     else:
