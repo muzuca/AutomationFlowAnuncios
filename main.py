@@ -787,6 +787,13 @@ def main() -> None:
                                 log_error(f"O arquivo roteiros.txt não retornou cenas válidas! Deletando lixo do Gemini...")
                                 caminho_roteiros_unificado.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
                                 raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
+
+                            # 🚨 VALIDAÇÃO CRÍTICA: Garantir que temos o número certo de cenas
+                            if len(cenas) < qtd_cenas_anuncio:
+                                log_error(f"❌ O roteiro retornou apenas {len(cenas)} cena(s), mas esperava {qtd_cenas_anuncio}! Deletando lixo do Gemini e regerando...")
+                                caminho_roteiros_unificado.unlink(missing_ok=True)
+                                raise Exception(f"Lista de cenas incompleta ({len(cenas)}/{qtd_cenas_anuncio}). O roteiro gerado pela IA foi inválido.")
+
                             
                             nome_video_final = f"Video_R{r_idx}v{v_idx}.mp4"
                             # Salva LOCALMENTE primeiro na pasta de origem
@@ -811,6 +818,19 @@ def main() -> None:
                             
                             for c_idx, prompt_cena in enumerate(cenas, start=1):
                                 log_step(f"🎬 [DEBUG] Roteiro: {sufixo_rot} | Variante {v_idx} | Cena {c_idx} | Texto: {prompt_cena[:50]}...")
+                                
+                                # --- CHECKPOINT DE CENA PARCIAL ---
+                                # Verifica se esta cena já foi gerada com sucesso em alguma tentativa anterior
+                                padrao_cena = f"temp_R{r_idx}v{v_idx}c{c_idx}_t*.mp4"
+                                cenas_existentes = list(Path(task.folder_path).glob(padrao_cena))
+                                if not cenas_existentes:
+                                    cenas_existentes = list(Path(task.folder_path).glob(f"temp_R{r_idx}v{v_idx}c{c_idx}.mp4"))
+                                    
+                                if cenas_existentes:
+                                    caminho_cena_ja_feita = cenas_existentes[0]
+                                    log_success(f"🚀 CHECKPOINT CENA ALCANÇADO: Cena {c_idx} já existe ({caminho_cena_ja_feita.name}). Pulando geração!")
+                                    videos_cenas_parciais.append(caminho_cena_ja_feita)
+                                    continue
                                 
                                 sucesso_geracao = False
                                 for tentativa_projeto in range(1, 4):
