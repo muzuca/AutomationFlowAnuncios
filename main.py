@@ -26,7 +26,7 @@ from selenium.common.exceptions import TimeoutException
 from config import get_settings
 from integrations.browser import close_driver, create_driver
 from integrations.gemini import GeminiAnunciosViaFlow
-from integrations.google_login import garantir_medico_vivo, inicializar_medico_seguro, login_google, open_gemini
+from integrations.google_login import garantir_medico_vivo, inicializar_medico_seguro, login_google, open_gemini, realizar_checkup_medico_pre_voo
 from integrations.window_focus import dismiss_chrome_native_popup_with_retry, fechar_popup_cromado_pos_gemini
 from integrations.flow import GoogleFlowAutomation, ler_e_separar_cenas
 from integrations.video_manager import concatenar_cenas_720p, converter_para_1080p, limpar_arquivos_temporarios
@@ -72,9 +72,7 @@ def main() -> None:
         settings = get_settings()
         if settings.accounts:
             # Pega a conta designada para ser a médica (ex: a última da lista ou uma específica do seu .env)
-            conta_medica = settings.accounts[-1] 
-            from integrations.google_login import realizar_checkup_medico_pre_voo
-            realizar_checkup_medico_pre_voo(settings, conta_medica)
+            realizar_checkup_medico_pre_voo(settings)
         else:
             log_error("Sem contas para inicializar a Unidade Médica!")
             sys.exit(1)
