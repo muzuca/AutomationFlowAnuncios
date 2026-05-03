@@ -262,106 +262,25 @@ def main() -> None:
                         # Pega apenas os arquivos crus (ignora arquivos ocultos e coisas já geradas)
                         arquivos_brutos = [f for f in pasta_task.iterdir() if f.is_file() and not f.name.startswith('.') and "roteiro" not in f.name.lower() and "ia_" not in f.name.lower() and "metadados" not in f.name.lower()]                        
 
-                        if len(arquivos_brutos) >= 2:
-                            # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no OCR
-                            try:
-                                dados_ia = gemini.classificar_arquivos_e_extrair_dados(arquivos_brutos)
-                            except Exception as e:
-                                if "Timeout" in str(e) or "anexar" in str(e).lower():
-                                    raise Exception(f"SWITCH_ACCOUNT: Falha anexo OCR na conta {account.email}")
-                                raise e
-                            
-                            if dados_ia:
-                                log_success('IA classificou os arquivos e extraiu os dados!')
-                                mapa_arquivos = {f.name.lower(): f for f in arquivos_brutos}
-
-                                # 1. Renomeia os arquivos focando SÓ no nome base
-                                def renomear_seguro(chave_json, prefixo):
-                                    # Pega o nome do arquivo que a IA sugeriu para essa categoria
-                                    nome_ia = str(dados_ia.get(chave_json, "")).strip().lower()
-                                    if not nome_ia or nome_ia == "none" or nome_ia == "não lido":
-                                        return
-                                    
-                                    # Extrai apenas o "corpo" do nome (ex: img_6607)
-                                    base_ia = Path(nome_ia).stem.lower() 
-                                    
-                                    for nome_real, arq_obj in list(mapa_arquivos.items()):
-                                        base_real = arq_obj.stem.lower()
-                                        
-                                        # Comparação flexível: se o nome da IA está no nome real ou vice-versa
-                                        if base_ia == base_real or base_ia in base_real or base_real in base_ia:
-                                            # Se já tiver o prefixo, não faz nada
-                                            if arq_obj.name.startswith(prefixo):
-                                                break
-                                                
-                                            novo_nome = f"{prefixo}_{arq_obj.name}"
-                                            novo_caminho = arq_obj.parent / novo_nome
-                                            
-                                            try:
-                                                arq_obj.rename(novo_caminho)
-                                                log_success(f'Arquivo renomeado: {arq_obj.name} -> {novo_nome}')
-                                                
-                                                # Atualiza o mapa para as próximas renomeações não se perderem
-                                                mapa_arquivos[novo_nome.lower()] = Path(novo_caminho)
-                                                if nome_real in mapa_arquivos:
-                                                    del mapa_arquivos[nome_real]
-                                                break # Achou e renomeou, sai do loop interno
-                                            except Exception as e:
-                                                log_error(f"Erro físico ao renomear {arq_obj.name}: {e}")
-
-                                # --- 🛡️ EXECUÇÃO DAS RENOMEAÇÕES ---
-                                # Aqui batemos as chaves que a IA costuma cuspir no JSON
-                                renomear_seguro('arquivo_produto', 'Base_Produto')
-                                renomear_seguro('arquivo_preco', 'Ref_Preco')
-                                
-                                # Tenta as duas variações de chave de referência para não ter erro
-                                renomear_seguro('referencia_extra', 'Ref_Extra')
-                                renomear_seguro('arquivo_referencia', 'Ref_Extra')
-                                
-                                # 2. Salva o TXT com a riqueza de detalhes
-                                conteudo_txt = formatar_dados_produto(dados_ia)
-                                caminho_metadados.write_text(conteudo_txt, encoding='utf-8')
-                            else:
-                                raise Exception("IA falhou ao gerar o JSON de classificação de arquivos.")
-                        else:
-                            log_step("Aviso: Poucos arquivos na pasta para classificação IA. Seguindo fluxo normal...")
+                        # 🚨 CORREÇÃO: Pulo de conta se o anexo falhar no OCR
+                        try:
+                            from anuncios.processor import classificar_e_renomear_arquivos
+                            classificar_e_renomear_arquivos(gemini, pasta_task, arquivos_brutos)
+                        except Exception as e:
+                            if "Timeout" in str(e) or "anexar" in str(e).lower():
+                                raise Exception(f"SWITCH_ACCOUNT: Falha anexo OCR na conta {account.email}")
+                            raise e
 
                     # 3. Injeta os dados riquíssimos do TXT direto na variável da Tarefa
                     # 3.1. Primeiro você estabiliza qual é a tarefa definitiva e prepara os assets
                     prepared = prepare_task(task)
                     log_success(describe_task(prepared.task))
 
-                    # 3.2. SÓ AGORA você injeta os dados do metadados.txt (para nada sobrescrever eles)
+                    # 3.2. Injeta metadados e mapeia arquivos
                     pasta_task = Path(task.folder_path)
                     caminho_metadados = pasta_task / "metadados.txt"
-
-                    if caminho_metadados.exists():
-                        txt_lines = caminho_metadados.read_text(encoding='utf-8').splitlines()
-                        for line in txt_lines:
-                            if line.startswith('NOME_REAL:'):
-                                task.dados_anuncio['nome_produto'] = line.replace('NOME_REAL:', '').strip()
-                            if line.startswith('NOME_RESUMIDO:'):
-                                task.dados_anuncio['nome_resumido'] = line.replace('NOME_RESUMIDO:', '').strip()
-                            if line.startswith('PRECO_E_CONDICOES:'):
-                                task.dados_anuncio['preco'] = line.replace('PRECO_E_CONDICOES:', '').strip()
-                            if line.startswith('BENEFICIOS_EXTRAS:'):
-                                task.dados_anuncio['beneficios_extras'] = line.replace('BENEFICIOS_EXTRAS:', '').strip()
-                    
-                    arquivos_produto = list(pasta_task.glob("Base_Produto*"))
-                    if arquivos_produto:
-                        primeira_imagem = arquivos_produto[0]
-                    elif prepared.candidate_product_assets:
-                        primeira_imagem = prepared.candidate_product_assets[0].path
-                    else:
-                        raise Exception('Nenhum candidato de imagem de produto encontrado na tarefa')
-                    
-                    arquivo_ref = list(pasta_task.glob("Ref_Extra*"))[0] if list(pasta_task.glob("Ref_Extra*")) else prepared.reference_asset.path if prepared.reference_asset else None
-                    arquivo_preco = list(pasta_task.glob("Ref_Preco*"))[0] if list(pasta_task.glob("Ref_Preco*")) else prepared.price_asset.path if prepared.price_asset else None
-
-                    if arquivo_preco:
-                        log_success(f'Arquivo de preco mapeado: {arquivo_preco.name}')
-                    if arquivo_ref:
-                        log_success(f'Arquivo de referencia mapeado: {arquivo_ref.name}')
+                    from anuncios.processor import injetar_metadados_na_tarefa
+                    primeira_imagem, arquivo_ref, arquivo_preco = injetar_metadados_na_tarefa(task, pasta_task)
 
                     # --- IDENTIFICAÇÃO DO TIPO DE PASTA ---
                     partes_caminho_task = Path(prepared.task.folder_path).parts
@@ -741,42 +660,14 @@ def main() -> None:
                                 else:
                                     raise Exception(f'Falha fatal ao gerar Imagem Base para {sufixo_rot}')
 
-                        # --- CHECKPOINT: IA ROTEIRO (NOVO MODELO DE ARQUIVO UNIFICADO) ---
-                        precisa_gerar_roteiro = True
-                        texto_roteiro_atual = ""
-                        
-                        # Tenta ler de roteiros.txt, fallback para metadados.txt (legado)
-                        _arquivo_roteiro_fonte = None
-                        if caminho_roteiros_unificado.exists():
-                            _arquivo_roteiro_fonte = caminho_roteiros_unificado
-                        elif caminho_metadados.exists() and f"=== ROTEIRO {r_idx}_VARIANTE_1 ===" in caminho_metadados.read_text(encoding='utf-8'):
-                            _arquivo_roteiro_fonte = caminho_metadados  # legado
-                        
-                        if _arquivo_roteiro_fonte:
-                            conteudo_total = _arquivo_roteiro_fonte.read_text(encoding='utf-8')
-                            # O arquivo salva como "ROTEIRO {r_idx}_VARIANTE_1", não "ROTEIRO {r_idx}"
-                            marcador_roteiro = f"=== ROTEIRO {r_idx}_VARIANTE_1 ==="
-                            
-                            if marcador_roteiro in conteudo_total:
-                                bloco = conteudo_total.split(marcador_roteiro)[1]
-                                bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
-                                
-                                if len(bloco.strip()) < 500 or not re.search(r'\[[Cc]ena\s*1', bloco):
-                                    log_error(f'⚠️ Roteiro {r_idx} pequeno ou sem cenas válidas no arquivo unificado. Regerando...')
-                                else:
-                                    log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Roteiro {r_idx} já existe em {_arquivo_roteiro_fonte.name}.')
-                                    precisa_gerar_roteiro = False
-                                    texto_roteiro_atual = bloco.strip()
-                                    
-                                    # Seta variáveis que o Flow precisa para não crashar
-                                    roteiro_1_limpo = bloco.strip()
-                                    marcador_v2 = f"=== ROTEIRO {r_idx}_VARIANTE_2 ==="
-                                    if marcador_v2 in conteudo_total:
-                                        bloco_v2 = conteudo_total.split(marcador_v2)[1]
-                                        bloco_v2 = bloco_v2.split("\n===")[0] if "\n===" in bloco_v2 else bloco_v2
-                                        roteiro_2_limpo = bloco_v2.strip()
-                                    else:
-                                        roteiro_2_limpo = roteiro_1_limpo
+                        # --- CHECKPOINT: IA ROTEIRO ---
+                        from integrations.utils import carregar_checkpoint_roteiro
+                        _ckpt = carregar_checkpoint_roteiro(pasta_task, r_idx, caminho_roteiros_unificado, caminho_metadados)
+                        precisa_gerar_roteiro = not _ckpt["encontrado"]
+                        texto_roteiro_atual = _ckpt["roteiro_1"]
+                        if _ckpt["encontrado"]:
+                            roteiro_1_limpo = _ckpt["roteiro_1"]
+                            roteiro_2_limpo = _ckpt["roteiro_2"]
 
                         if precisa_gerar_roteiro:
                             log_step(f'ETAPA IA: Gerando roteiros para {sufixo_rot} ({r_idx}/{qtd_roteiros})...')
@@ -863,42 +754,9 @@ def main() -> None:
                             sufixo_variante = f"VARIANTE_{v_idx}" 
                             cenas = ler_e_separar_cenas(caminho_roteiros_unificado, num_roteiro=r_idx, qtd_cenas=qtd_cenas_anuncio, variante=sufixo_variante)
                             
-                            # 🛡️ Limpeza de marcadores vazados nas cenas extraídas
-                            if cenas:
-                                cenas = [re.sub(r'===\s*VARIANTE\s*\d+\s*===', '', c).strip() for c in cenas]
-                                cenas = [re.sub(r'===\s*ROTEIRO\s*\d+[^=]*===', '', c).strip() for c in cenas]
-                                cenas = [c for c in cenas if len(c) > 10]  # Remove cenas que ficaram vazias após limpeza
-                            
-                            # 🛡️ Validação de qualidade do voiceover (detecta texto grudado do Gemini)
-                            if cenas:
-                                for _ci, _cena_txt in enumerate(cenas):
-                                    # Extrai o texto entre aspas do voiceover
-                                    _match_vo = re.search(r':\s*"([^"]{30,})"', _cena_txt)
-                                    if _match_vo:
-                                        _vo_text = _match_vo.group(1)
-                                        _palavras = _vo_text.split()
-                                        # Se alguma "palavra" tem > 40 chars, o texto está grudado
-                                        _palavras_grudadas = [p for p in _palavras if len(p) > 40]
-                                        if _palavras_grudadas:
-                                            log_error(f"🚨 GUARD VOICEOVER: Cena {_ci+1} tem texto GRUDADO: '{_palavras_grudadas[0][:50]}...'")
-                                            log_error(f"🚨 Deletando roteiro corrompido e forçando regeneração...")
-                                            caminho_roteiros_unificado.unlink(missing_ok=True)
-                                            raise Exception(f"Voiceover da Cena {_ci+1} corrompido pelo Gemini (texto sem espaços). Regerando roteiro.")
-                            
-                            # Fallback dinâmico caso a sua função nativa de cenas falhe
-                            if not cenas:
-                                cenas = [c.strip() for c in re.split(r'\[Cena\s*\d+[^\]]*\]', roteiro_atual) if len(c.strip()) > 10][:qtd_cenas_anuncio]
-
-                            if not cenas:
-                                log_error(f"O arquivo roteiros.txt não retornou cenas válidas! Deletando lixo do Gemini...")
-                                caminho_roteiros_unificado.unlink(missing_ok=True) # DELETA PARA SAIR DO LOOP INFINITO
-                                raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
-
-                            # 🚨 VALIDAÇÃO CRÍTICA: Garantir que temos o número certo de cenas
-                            if len(cenas) < qtd_cenas_anuncio:
-                                log_error(f"❌ O roteiro retornou apenas {len(cenas)} cena(s), mas esperava {qtd_cenas_anuncio}! Deletando lixo do Gemini e regerando...")
-                                caminho_roteiros_unificado.unlink(missing_ok=True)
-                                raise Exception(f"Lista de cenas incompleta ({len(cenas)}/{qtd_cenas_anuncio}). O roteiro gerado pela IA foi inválido.")
+                            # 🛡️ Validação e limpeza de cenas
+                            from integrations.utils import validar_e_limpar_cenas
+                            cenas = validar_e_limpar_cenas(cenas, qtd_cenas_anuncio, caminho_roteiros_unificado, roteiro_atual)
 
                             
                             nome_video_final = f"Video_R{r_idx}v{v_idx}.mp4"
@@ -1041,37 +899,8 @@ def main() -> None:
                     # 🚀 ENTREGA FINAL: MOVE TUDO PARA A PASTA DE ANUNCIOS E LIMPA A ORIGEM
                     # =========================================================================
                     
-                    # 📋 Consolida os 4 arquivos em um único metadados.txt organizado
-                    try:
-                        from integrations.utils import consolidar_metadados_final
-                        consolidar_metadados_final(Path(prepared.task.folder_path))
-                    except Exception as e_cons:
-                        log_error(f"⚠️ Erro ao consolidar metadados (não-fatal): {e_cons}")
-                    
-                    log_step(f"🏆 Concluído! Movendo todos os arquivos gerados para: {pasta_entrega.name}")
-                    pasta_entrega.mkdir(parents=True, exist_ok=True)
-                    
-                    # Copia arquivos finais para entrega (exceto arquivos de trabalho)
-                    _arquivos_trabalho = {"roteiros.txt", "legendas.txt", "prompts.txt"}
-                    
-                    pasta_origem = Path(prepared.task.folder_path)
-                    for item_final in pasta_origem.iterdir():
-                        if item_final.is_file():
-                            if item_final.name not in _arquivos_trabalho:
-                                shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
-                            # Remove TODOS os arquivos (incluindo os de trabalho)
-                            item_final.unlink(missing_ok=True)
-                    
-                    # 🧹 LIMPEZA DE DIRETÓRIO: ID "1" permanece vazio, demais são removidos
-                    id_pasta = pasta_origem.name
-                    if id_pasta != "1":
-                        try:
-                            shutil.rmtree(str(pasta_origem), ignore_errors=True)
-                            log_success(f'TAREFA CONCLUÍDA! Diretório {id_pasta} removido (entrega em {pasta_entrega.name})')
-                        except Exception as e_rm:
-                            log_error(f"⚠️ Não conseguiu remover pasta {id_pasta}: {e_rm}")
-                    else:
-                        log_success(f'TAREFA CONCLUÍDA! Diretório 1 esvaziado (entrega em {pasta_entrega.name})')
+                    from integrations.utils import entregar_e_limpar_tarefa
+                    entregar_e_limpar_tarefa(Path(prepared.task.folder_path), pasta_entrega)
                     
                     salvar_ultima_conta_env(account.email)
                     sucesso_absoluto_tarefa = True

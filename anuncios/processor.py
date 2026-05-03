@@ -190,3 +190,116 @@ def consolidar_arquivos_unificados(pasta_task: Path, metadados_texto: str, rotei
     for i, legenda in enumerate(legendas_lista, 1):
         conteudo_legendas += f"=== LEGENDA {i} ===\n{legenda}\n\n"
     (pasta_task / "legendas.txt").write_text(conteudo_legendas.strip(), encoding='utf-8')
+
+
+def classificar_e_renomear_arquivos(gemini, pasta_task: Path, arquivos_brutos: list) -> dict | None:
+    """
+    Usa o Gemini para classificar arquivos e renomear com prefixos padrão.
+    Retorna os dados extraídos (dict) ou None se falhou.
+    """
+    from integrations.utils import _log, log_success, log_error, formatar_dados_produto
+    
+    if len(arquivos_brutos) < 2:
+        _log("Aviso: Poucos arquivos na pasta para classificação IA. Seguindo fluxo normal...")
+        return None
+    
+    dados_ia = gemini.classificar_arquivos_e_extrair_dados(arquivos_brutos)
+    
+    if not dados_ia:
+        raise Exception("IA falhou ao gerar o JSON de classificação de arquivos.")
+    
+    log_success('IA classificou os arquivos e extraiu os dados!')
+    mapa_arquivos = {f.name.lower(): f for f in arquivos_brutos}
+    
+    def _renomear_seguro(chave_json, prefixo):
+        nome_ia = str(dados_ia.get(chave_json, "")).strip().lower()
+        if not nome_ia or nome_ia == "none" or nome_ia == "não lido":
+            return
+        
+        base_ia = Path(nome_ia).stem.lower()
+        
+        for nome_real, arq_obj in list(mapa_arquivos.items()):
+            base_real = arq_obj.stem.lower()
+            
+            if base_ia == base_real or base_ia in base_real or base_real in base_ia:
+                if arq_obj.name.startswith(prefixo):
+                    break
+                
+                novo_nome = f"{prefixo}_{arq_obj.name}"
+                novo_caminho = arq_obj.parent / novo_nome
+                
+                try:
+                    arq_obj.rename(novo_caminho)
+                    log_success(f'Arquivo renomeado: {arq_obj.name} -> {novo_nome}')
+                    mapa_arquivos[novo_nome.lower()] = Path(novo_caminho)
+                    if nome_real in mapa_arquivos:
+                        del mapa_arquivos[nome_real]
+                    break
+                except Exception as e:
+                    log_error(f"Erro físico ao renomear {arq_obj.name}: {e}")
+    
+    # Executa renomeações padrão
+    _renomear_seguro('arquivo_produto', 'Base_Produto')
+    _renomear_seguro('arquivo_preco', 'Ref_Preco')
+    _renomear_seguro('referencia_extra', 'Ref_Extra')
+    _renomear_seguro('arquivo_referencia', 'Ref_Extra')
+    
+    # Salva metadados do produto
+    conteudo_txt = formatar_dados_produto(dados_ia)
+    (pasta_task / "metadados.txt").write_text(conteudo_txt, encoding='utf-8')
+    
+    return dados_ia
+
+
+def injetar_metadados_na_tarefa(task: AdTask, pasta_task: Path) -> tuple:
+    """
+    Lê metadados.txt e preenche task.dados_anuncio.
+    Mapeia os arquivos Base_Produto, Ref_Extra e Ref_Preco.
+    
+    Retorna: (primeira_imagem, arquivo_ref, arquivo_preco)
+    """
+    from integrations.utils import log_success
+    
+    caminho_metadados = pasta_task / "metadados.txt"
+    
+    if caminho_metadados.exists():
+        txt_lines = caminho_metadados.read_text(encoding='utf-8').splitlines()
+        _campos = {
+            'NOME_REAL:': 'nome_produto',
+            'NOME_RESUMIDO:': 'nome_resumido',
+            'PRECO_E_CONDICOES:': 'preco',
+            'BENEFICIOS_EXTRAS:': 'beneficios_extras',
+        }
+        for line in txt_lines:
+            for prefixo, chave in _campos.items():
+                if line.startswith(prefixo):
+                    task.dados_anuncio[chave] = line.replace(prefixo, '').strip()
+    
+    # Mapeia arquivos
+    arquivos_produto = list(pasta_task.glob("Base_Produto*"))
+    if arquivos_produto:
+        primeira_imagem = arquivos_produto[0]
+    else:
+        # Fallback: prepara a tarefa e pega o candidato
+        prepared = prepare_task(task)
+        if prepared.candidate_product_assets:
+            primeira_imagem = prepared.candidate_product_assets[0].path
+        else:
+            raise Exception('Nenhum candidato de imagem de produto encontrado na tarefa')
+    
+    arquivo_ref = None
+    refs = list(pasta_task.glob("Ref_Extra*"))
+    if refs:
+        arquivo_ref = refs[0]
+    
+    arquivo_preco = None
+    precos = list(pasta_task.glob("Ref_Preco*"))
+    if precos:
+        arquivo_preco = precos[0]
+    
+    if arquivo_preco:
+        log_success(f'Arquivo de preco mapeado: {arquivo_preco.name}')
+    if arquivo_ref:
+        log_success(f'Arquivo de referencia mapeado: {arquivo_ref.name}')
+    
+    return primeira_imagem, arquivo_ref, arquivo_preco

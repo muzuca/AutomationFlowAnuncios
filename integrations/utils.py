@@ -646,3 +646,148 @@ def consolidar_metadados_final(pasta_task: Path) -> None:
     meta_path.write_text(texto_final + "\n", encoding='utf-8')
     _log(f"✅ Metadados consolidado para entrega: {meta_path.name} ({len(texto_final)} chars)")
 
+
+def entregar_e_limpar_tarefa(pasta_origem: Path, pasta_entrega: Path) -> None:
+    """
+    Consolida metadados, copia arquivos finais para entrega e limpa a origem.
+    - Pasta ID "1" permanece vazia
+    - Pastas com ID > 1 são completamente removidas
+    """
+    import shutil
+    
+    # 📋 Consolida os 4 arquivos em um único metadados.txt organizado
+    try:
+        consolidar_metadados_final(pasta_origem)
+    except Exception as e_cons:
+        log_error(f"⚠️ Erro ao consolidar metadados (não-fatal): {e_cons}")
+    
+    _log(f"🏆 Concluído! Movendo todos os arquivos gerados para: {pasta_entrega.name}")
+    pasta_entrega.mkdir(parents=True, exist_ok=True)
+    
+    # Copia arquivos finais para entrega (exceto arquivos de trabalho)
+    _arquivos_trabalho = {"roteiros.txt", "legendas.txt", "prompts.txt"}
+    
+    for item_final in pasta_origem.iterdir():
+        if item_final.is_file():
+            if item_final.name not in _arquivos_trabalho:
+                shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
+            # Remove TODOS os arquivos (incluindo os de trabalho)
+            item_final.unlink(missing_ok=True)
+    
+    # 🧹 LIMPEZA DE DIRETÓRIO: ID "1" permanece vazio, demais são removidos
+    id_pasta = pasta_origem.name
+    if id_pasta != "1":
+        try:
+            shutil.rmtree(str(pasta_origem), ignore_errors=True)
+            log_success(f'TAREFA CONCLUÍDA! Diretório {id_pasta} removido (entrega em {pasta_entrega.name})')
+        except Exception as e_rm:
+            log_error(f"⚠️ Não conseguiu remover pasta {id_pasta}: {e_rm}")
+    else:
+        log_success(f'TAREFA CONCLUÍDA! Diretório 1 esvaziado (entrega em {pasta_entrega.name})')
+
+
+def carregar_checkpoint_roteiro(
+    pasta_task: Path, r_idx: int, 
+    caminho_roteiros: Path, caminho_metadados: Path
+) -> dict:
+    """
+    Verifica se um roteiro já existe nos arquivos e carrega as variantes.
+    
+    Retorna dict com:
+      - 'encontrado': bool
+      - 'roteiro_1': str (texto da variante 1)
+      - 'roteiro_2': str (texto da variante 2)
+      - 'fonte': str (nome do arquivo fonte)
+    """
+    resultado = {'encontrado': False, 'roteiro_1': '', 'roteiro_2': '', 'fonte': ''}
+    
+    # Prioridade: roteiros.txt > metadados.txt (legado)
+    _arquivo_roteiro_fonte = None
+    if caminho_roteiros.exists():
+        _arquivo_roteiro_fonte = caminho_roteiros
+    elif caminho_metadados.exists():
+        conteudo_check = caminho_metadados.read_text(encoding='utf-8')
+        if f"=== ROTEIRO {r_idx}_VARIANTE_1 ===" in conteudo_check:
+            _arquivo_roteiro_fonte = caminho_metadados
+    
+    if not _arquivo_roteiro_fonte:
+        return resultado
+    
+    conteudo_total = _arquivo_roteiro_fonte.read_text(encoding='utf-8')
+    marcador_roteiro = f"=== ROTEIRO {r_idx}_VARIANTE_1 ==="
+    
+    if marcador_roteiro not in conteudo_total:
+        return resultado
+    
+    bloco = conteudo_total.split(marcador_roteiro)[1]
+    bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
+    
+    if len(bloco.strip()) < 500 or not re.search(r'\[[Cc]ena\s*1', bloco):
+        log_error(f'⚠️ Roteiro {r_idx} pequeno ou sem cenas válidas. Regerando...')
+        return resultado
+    
+    log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Roteiro {r_idx} já existe em {_arquivo_roteiro_fonte.name}.')
+    
+    roteiro_1 = bloco.strip()
+    
+    # Busca variante 2
+    marcador_v2 = f"=== ROTEIRO {r_idx}_VARIANTE_2 ==="
+    if marcador_v2 in conteudo_total:
+        bloco_v2 = conteudo_total.split(marcador_v2)[1]
+        bloco_v2 = bloco_v2.split("\n===")[0] if "\n===" in bloco_v2 else bloco_v2
+        roteiro_2 = bloco_v2.strip()
+    else:
+        roteiro_2 = roteiro_1
+    
+    resultado['encontrado'] = True
+    resultado['roteiro_1'] = roteiro_1
+    resultado['roteiro_2'] = roteiro_2
+    resultado['fonte'] = _arquivo_roteiro_fonte.name
+    return resultado
+
+
+def validar_e_limpar_cenas(
+    cenas: list[str], qtd_esperada: int, 
+    caminho_roteiros: Path, roteiro_fallback: str = ""
+) -> list[str]:
+    """
+    Limpa marcadores vazados, valida qualidade do voiceover e quantidade de cenas.
+    Levanta Exception se o roteiro estiver corrompido.
+    
+    Retorna lista de cenas limpas.
+    """
+    if not cenas:
+        # Fallback dinâmico
+        if roteiro_fallback:
+            cenas = [c.strip() for c in re.split(r'\[Cena\s*\d+[^\]]*\]', roteiro_fallback) if len(c.strip()) > 10][:qtd_esperada]
+        
+        if not cenas:
+            log_error("O arquivo roteiros.txt não retornou cenas válidas! Deletando lixo do Gemini...")
+            caminho_roteiros.unlink(missing_ok=True)
+            raise Exception("Lista de cenas vazia. O arquivo de roteiro era inválido.")
+    
+    # 🛡️ Limpeza de marcadores vazados
+    cenas = [re.sub(r'===\s*VARIANTE\s*\d+\s*===', '', c).strip() for c in cenas]
+    cenas = [re.sub(r'===\s*ROTEIRO\s*\d+[^=]*===', '', c).strip() for c in cenas]
+    cenas = [c for c in cenas if len(c) > 10]
+    
+    # 🛡️ Validação de qualidade do voiceover (texto grudado)
+    for _ci, _cena_txt in enumerate(cenas):
+        _match_vo = re.search(r':\s*"([^"]{30,})"', _cena_txt)
+        if _match_vo:
+            _vo_text = _match_vo.group(1)
+            _palavras = _vo_text.split()
+            _palavras_grudadas = [p for p in _palavras if len(p) > 40]
+            if _palavras_grudadas:
+                log_error(f"🚨 GUARD VOICEOVER: Cena {_ci+1} tem texto GRUDADO: '{_palavras_grudadas[0][:50]}...'")
+                log_error("🚨 Deletando roteiro corrompido e forçando regeneração...")
+                caminho_roteiros.unlink(missing_ok=True)
+                raise Exception(f"Voiceover da Cena {_ci+1} corrompido pelo Gemini (texto sem espaços). Regerando roteiro.")
+    
+    # 🛡️ Validação de quantidade
+    if len(cenas) < qtd_esperada:
+        log_error(f"❌ O roteiro retornou apenas {len(cenas)} cena(s), mas esperava {qtd_esperada}!")
+        caminho_roteiros.unlink(missing_ok=True)
+        raise Exception(f"Lista de cenas incompleta ({len(cenas)}/{qtd_esperada}).")
+    
+    return cenas
