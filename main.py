@@ -1051,15 +1051,27 @@ def main() -> None:
                     log_step(f"🏆 Concluído! Movendo todos os arquivos gerados para: {pasta_entrega.name}")
                     pasta_entrega.mkdir(parents=True, exist_ok=True)
                     
-                    # Arquivos de trabalho que já foram consolidados no metadados.txt
+                    # Copia arquivos finais para entrega (exceto arquivos de trabalho)
                     _arquivos_trabalho = {"roteiros.txt", "legendas.txt", "prompts.txt"}
                     
-                    for item_final in Path(prepared.task.folder_path).iterdir():
-                        if item_final.is_file() and item_final.name not in _arquivos_trabalho:
-                            shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
+                    pasta_origem = Path(prepared.task.folder_path)
+                    for item_final in pasta_origem.iterdir():
+                        if item_final.is_file():
+                            if item_final.name not in _arquivos_trabalho:
+                                shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
+                            # Remove TODOS os arquivos (incluindo os de trabalho)
                             item_final.unlink(missing_ok=True)
                     
-                    log_success(f'TAREFA CONCLUÍDA! O diretório de origem ficou vazio.')
+                    # 🧹 LIMPEZA DE DIRETÓRIO: ID "1" permanece vazio, demais são removidos
+                    id_pasta = pasta_origem.name
+                    if id_pasta != "1":
+                        try:
+                            shutil.rmtree(str(pasta_origem), ignore_errors=True)
+                            log_success(f'TAREFA CONCLUÍDA! Diretório {id_pasta} removido (entrega em {pasta_entrega.name})')
+                        except Exception as e_rm:
+                            log_error(f"⚠️ Não conseguiu remover pasta {id_pasta}: {e_rm}")
+                    else:
+                        log_success(f'TAREFA CONCLUÍDA! Diretório 1 esvaziado (entrega em {pasta_entrega.name})')
                     
                     salvar_ultima_conta_env(account.email)
                     sucesso_absoluto_tarefa = True
