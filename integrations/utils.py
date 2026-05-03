@@ -650,6 +650,8 @@ def consolidar_metadados_final(pasta_task: Path) -> None:
 def entregar_e_limpar_tarefa(pasta_origem: Path, pasta_entrega: Path) -> None:
     """
     Consolida metadados, copia arquivos finais para entrega e limpa a origem.
+    Renomeia arquivos com prefixos numéricos para organização:
+      01_produto, 02_preco, 03_referencia, 04_metadados, 05_imagem, 06_video
     - Pasta ID "1" permanece vazia
     - Pastas com ID > 1 são completamente removidas
     """
@@ -664,13 +666,14 @@ def entregar_e_limpar_tarefa(pasta_origem: Path, pasta_entrega: Path) -> None:
     _log(f"🏆 Concluído! Movendo todos os arquivos gerados para: {pasta_entrega.name}")
     pasta_entrega.mkdir(parents=True, exist_ok=True)
     
-    # Copia arquivos finais para entrega (exceto arquivos de trabalho)
+    # Arquivos de trabalho que não vão para a entrega
     _arquivos_trabalho = {"roteiros.txt", "legendas.txt", "prompts.txt"}
     
     for item_final in pasta_origem.iterdir():
         if item_final.is_file():
             if item_final.name not in _arquivos_trabalho:
-                shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
+                novo_nome = _renomear_para_entrega(item_final.name)
+                shutil.copy2(str(item_final), str(pasta_entrega / novo_nome))
             # Remove TODOS os arquivos (incluindo os de trabalho)
             item_final.unlink(missing_ok=True)
     
@@ -684,6 +687,54 @@ def entregar_e_limpar_tarefa(pasta_origem: Path, pasta_entrega: Path) -> None:
             log_error(f"⚠️ Não conseguiu remover pasta {id_pasta}: {e_rm}")
     else:
         log_success(f'TAREFA CONCLUÍDA! Diretório 1 esvaziado (entrega em {pasta_entrega.name})')
+
+
+def _renomear_para_entrega(nome_original: str) -> str:
+    """
+    Renomeia arquivo para entrega com prefixo numérico + lowercase.
+    
+    Ordem:
+      01_produto.ext    — Base_Produto_*
+      02_preco.ext      — Ref_Preco_*
+      03_referencia.ext — Ref_Extra_*
+      04_metadados.txt  — metadados.txt
+      05_imagem_rN.ext  — IA_RoteiroN.*
+      06_video_rNvN.mp4 — Video_RNvN.*
+    """
+    nome_lower = nome_original.lower()
+    ext = Path(nome_original).suffix.lower()
+    
+    # 01 — Produto
+    if nome_lower.startswith("base_produto"):
+        return f"01_produto{ext}"
+    
+    # 02 — Preço
+    if nome_lower.startswith("ref_preco"):
+        return f"02_preco{ext}"
+    
+    # 03 — Referência extra
+    if nome_lower.startswith("ref_extra"):
+        return f"03_referencia{ext}"
+    
+    # 04 — Metadados
+    if nome_lower == "metadados.txt":
+        return "04_metadados.txt"
+    
+    # 05 — Imagens IA (IA_Roteiro1.png → 05_imagem_r1.png)
+    match_img = re.match(r'ia_roteiro(\d+)', nome_lower)
+    if match_img:
+        r_num = match_img.group(1)
+        return f"05_imagem_r{r_num}{ext}"
+    
+    # 06 — Vídeos (Video_R1v2.mp4 → 06_video_r1v2.mp4)
+    match_vid = re.match(r'video_r(\d+)v(\d+)', nome_lower)
+    if match_vid:
+        r_num = match_vid.group(1)
+        v_num = match_vid.group(2)
+        return f"06_video_r{r_num}v{v_num}{ext}"
+    
+    # Fallback: mantém o nome original em lowercase
+    return nome_lower
 
 
 def carregar_checkpoint_roteiro(
