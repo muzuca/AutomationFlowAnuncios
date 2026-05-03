@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, _get_logs_dir, salvar_ultimo_prompt, limpar_diretorio_visao, forcar_fechamento_janela_windows
-from integrations.self_healing import cacar_elemento_universal
+from integrations.self_healing import cacar_elemento_universal, clicar_com_hunter, interagir_com_menu_complexo, superar_obstaculo_desconhecido, detectar_com_hunter
 
 from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -71,13 +71,21 @@ class GeminiAnunciosViaFlow:
         self._superar_bloqueios_e_onboarding()
 
         try:
-            # Selecionamos o alvo principal (Microfone ou Caixa de Texto)
-            alvo = self.driver.find_element(By.CSS_SELECTOR, 'button.speech_dictation_mic_button, rich-textarea div[contenteditable="true"]')
+            # 🛡️ HUNTER: Selecionamos o alvo principal (Microfone ou Caixa de Texto)
+            alvo = cacar_elemento_universal(
+                driver=self.driver,
+                chave_memoria="gemini_alvo_ui_ociosa",
+                descricao_para_ia="Botão de microfone ou caixa de texto contenteditable no chat do Gemini (indicando UI ociosa)",
+                seletores_rapidos=[
+                    'button.speech_dictation_mic_button',
+                    'rich-textarea div[contenteditable="true"]',
+                ],
+                palavras_semanticas=["microphone", "microfone"],
+                permitir_autocura=False,
+                etapa="GEMINI_CHAT",
+            )
             
-            if alvo.is_displayed():
-                # --- A PROVA REAL (RAIO-X) ---
-                # Verificamos se o elemento no topo dessa coordenada é o próprio alvo.
-                # Se houver uma landing page na frente, o 'elementFromPoint' retornará a landing page, não o chat.
+            if alvo and alvo.is_displayed():
                 is_obstruido = self.driver.execute_script("""
                     var el = arguments[0];
                     var rect = el.getBoundingClientRect();
@@ -101,8 +109,16 @@ class GeminiAnunciosViaFlow:
                 _log("⚠️ Trator falhou. Tentando Refresh de emergência...")
                 self.driver.refresh()
                 time.sleep(5)
-                # Check final pós-refresh
-                if not self.driver.find_elements(By.CSS_SELECTOR, 'button.speech_dictation_mic_button'):
+                # 🛡️ HUNTER: Check final pós-refresh
+                mic_check = detectar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="gemini_mic_check_refresh",
+                    descricao_para_ia="Botão de microfone no Gemini após refresh (indicando UI funcional)",
+                    seletores_rapidos=['button.speech_dictation_mic_button', 'rich-textarea div[contenteditable="true"]'],
+                    palavras_semanticas=["microphone", "microfone"],
+                    etapa="GEMINI_CHAT",
+                )
+                if not mic_check:
                     raise Exception("Interface bloqueada. Rotacionando conta.")
             
             _log("✅ Interface liberada.")
@@ -220,7 +236,24 @@ class GeminiAnunciosViaFlow:
                 except: pass
 
                 if not clicou_algo: break
-                    
+            
+            # 🧠 FALLBACK INTELIGENTE: Trator não resolveu, pede ajuda à IA
+            _log("🧠 Trator falhou. Acionando resolução autônoma via IA...")
+            resolveu = superar_obstaculo_desconhecido(
+                driver=self.driver,
+                driver_acessibilidade=getattr(self, 'driver_acessibilidade', None),
+                url_gemini=getattr(self, 'url_gemini_acessibilidade', None),
+                contexto="tela de bloqueio, onboarding ou popup de termos no Gemini impedindo acesso ao chat"
+            )
+            if resolveu:
+                # Verifica se a caixa de texto apareceu após a resolução
+                try:
+                    textarea = self.driver.find_elements(By.CSS_SELECTOR, 'rich-textarea div[contenteditable="true"]')
+                    if textarea and textarea[0].is_displayed():
+                        _log("✅ IA resolveu o bloqueio! Interface de chat liberada.")
+                        return True
+                except: pass
+            
             return False
             
         finally:
@@ -234,16 +267,26 @@ class GeminiAnunciosViaFlow:
         
         for tentativa in range(1, 4):
             try:
-                menu_btn_elements = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="bard-mode-menu-button"], button[aria-label="Open mode picker"]')
-                if not menu_btn_elements or not menu_btn_elements[0].is_displayed():
-                    _log(f'Botão de modelo ainda não apareceu ou está coberto (Tentativa {tentativa}/3)...')
-                    
-                    # Tenta dar mais um ESC para garantir que menus ocultos sumam
+                # 🛡️ HUNTER: Encontra o botão do menu de modelo
+                menu_btn = cacar_elemento_universal(
+                    driver=self.driver,
+                    chave_memoria="gemini_menu_modelo",
+                    descricao_para_ia="Botão do menu de seleção de modelo (Pro/Flash) no topo do chat do Gemini",
+                    seletores_rapidos=[
+                        'button[data-test-id="bard-mode-menu-button"]',
+                        'button[aria-label="Open mode picker"]',
+                    ],
+                    palavras_semanticas=["model", "modo", "pro", "flash"],
+                    etapa="GEMINI_MODELO",
+                    permitir_autocura=False,
+                )
+                
+                if not menu_btn or not menu_btn.is_displayed():
+                    _log(f'Botão de modelo ainda não apareceu (Tentativa {tentativa}/3)...')
                     ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
                     time.sleep(1.5)
-                    continue 
+                    continue
 
-                menu_btn = menu_btn_elements[0]
                 texto_atual = (menu_btn.text or '').strip().lower()
                 
                 if 'pro' in texto_atual and 'thinking' not in texto_atual and 'pensamento' not in texto_atual:
@@ -253,26 +296,31 @@ class GeminiAnunciosViaFlow:
                 _log(f'Modelo atual é "{texto_atual}". Abrindo menu de seleção (Tentativa {tentativa}/3)...')
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_btn)
                 time.sleep(0.5)
-                js_click(self.driver,menu_btn)
+                js_click(self.driver, menu_btn)
                 time.sleep(1.5) 
                 
-                seletores_pro = [
-                    'button[data-mode-id="e6fa609c3fa255c0"]',
-                    'button[data-test-id="bard-mode-option-pro"]'
-                ]
+                # 🛡️ HUNTER: Busca a opção Pro no menu aberto
+                opcao_pro = cacar_elemento_universal(
+                    driver=self.driver,
+                    chave_memoria="gemini_opcao_pro",
+                    descricao_para_ia="Opção 'Pro' (sem Thinking/Pensamento) no dropdown de modelos do Gemini",
+                    seletores_rapidos=[
+                        'button[data-mode-id="e6fa609c3fa255c0"]',
+                        'button[data-test-id="bard-mode-option-pro"]',
+                    ],
+                    palavras_semanticas=["pro"],
+                    etapa="GEMINI_MODELO",
+                    permitir_autocura=False,
+                )
                 
+                # Filtra para não pegar Pro Thinking / Pro Fast
                 clicou_pro = False
-                for seletor in seletores_pro:
-                    opcoes_pro = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                    for opcao in opcoes_pro:
-                        texto_opcao = (opcao.text or '').strip().lower()
-                        if 'thinking' not in texto_opcao and 'pensamento' not in texto_opcao and 'fast' not in texto_opcao:
-                            if opcao.is_displayed():
-                                js_click(self.driver,opcao)
-                                clicou_pro = True
-                                break
-                    if clicou_pro:
-                        break
+                if opcao_pro:
+                    texto_opcao = (opcao_pro.text or '').strip().lower()
+                    if 'thinking' not in texto_opcao and 'pensamento' not in texto_opcao and 'fast' not in texto_opcao:
+                        if opcao_pro.is_displayed():
+                            js_click(self.driver, opcao_pro)
+                            clicou_pro = True
 
                 if clicou_pro:
                     time.sleep(1.5) 
@@ -299,27 +347,28 @@ class GeminiAnunciosViaFlow:
         _log('Limpando interface para novo chat...')
             
         try:
-            seletores_botao = [
-                'side-nav-action-button[data-test-id="new-chat-button"] a',
-                'a.side-nav-action-collapsed-button[href="/app"]',
-                'span[data-test-id="new-chat-button"]',
-                'div[aria-label*="Novo chat"]',
-                'div[aria-label*="New chat"]'
-            ]
+            clicou = clicar_com_hunter(
+                driver=self.driver,
+                chave_memoria="gemini_btn_novo_chat",
+                descricao_para_ia="Botão de novo chat (New chat) na barra lateral do Gemini",
+                seletores_rapidos=[
+                    'side-nav-action-button[data-test-id="new-chat-button"] a',
+                    'a.side-nav-action-collapsed-button[href="/app"]',
+                    'span[data-test-id="new-chat-button"]',
+                    'div[aria-label*="Novo chat"]',
+                    'div[aria-label*="New chat"]',
+                ],
+                palavras_semanticas=["novo chat", "new chat", "nova conversa"],
+                etapa="GEMINI_NAVEGACAO",
+                permitir_autocura=True,
+                driver_acessibilidade=self.driver_acessibilidade,
+                url_gemini=self.url_gemini_acessibilidade,
+                timeout_busca=5.0,
+            )
             
-            clicou = False
-            for seletor in seletores_botao:
-                botoes = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                for btn in botoes:
-                    if btn.is_displayed():
-                        js_click(self.driver, btn)
-                        _log('Botão "Novo Chat" acionado.')
-                        clicou = True
-                        break
-                if clicou: break
-            
-            # Se não conseguiu clicar, não damos refresh. Apenas tentamos seguir ou validar a caixa.
-            if not clicou:
+            if clicou:
+                _log('Botão "Novo Chat" acionado.')
+            else:
                 _log('Aviso: Botão de Novo Chat não visível. Verificando se a caixa de texto já está limpa...')
             
             # Validação curta da caixa de texto
@@ -358,76 +407,120 @@ class GeminiAnunciosViaFlow:
     def _encontrar_input_file_visivel_ou_oculto(self, timeout: int = 10) -> WebElement:
         fim = time.time() + timeout
         ultimo_erro = None
-        seletores = ['input[type="file"]', 'input[type="file"][multiple]', 'input[accept*="image"]']
+        
         while time.time() < fim:
+            # 🛡️ HUNTER: Tenta via cache/semântica primeiro
+            el = cacar_elemento_universal(
+                driver=self.driver,
+                chave_memoria="gemini_input_file",
+                descricao_para_ia="Campo input[type=file] para upload de imagens no Gemini",
+                seletores_rapidos=[
+                    'input[type="file"]',
+                    'input[type="file"][multiple]',
+                    'input[accept*="image"]',
+                ],
+                palavras_semanticas=[],  # input[type=file] não tem texto visível
+                permitir_autocura=False,
+                etapa="GEMINI_UPLOAD",
+            )
+            if el is not None:
+                return el
+            
+            # Fallback: busca qualquer input file mesmo oculto
             try:
-                try:
-                    self.driver.switch_to.default_content()
-                except Exception:
-                    pass
-                for seletor in seletores:
-                    elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                    for el in elementos:
-                        if el is not None:
-                            return el
+                self.driver.switch_to.default_content()
+            except: pass
+            
+            try:
+                elementos = self.driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+                for e in elementos:
+                    if e is not None:
+                        return e
             except Exception as e:
                 ultimo_erro = e
-            time.sleep(0.1) 
+            
+            time.sleep(0.1)
+        
         if ultimo_erro:
             raise ultimo_erro
         raise TimeoutException('Nenhum input[type=file] encontrado no DOM.')
 
     def _obter_textarea_prompt(self) -> WebElement:
-        seletores = [
-            'rich-textarea div[contenteditable="true"]',
-            'div[contenteditable="true"][role="textbox"]',
-            '.initial-input-area-container textarea',
-            'textarea[placeholder="Ask Gemini"]',
-            'div[aria-label*="Message"]',
-            'div.editor-container div[contenteditable="true"]'
-        ]
+        # 🛡️ HUNTER: Busca via cache/semântica com performance
+        el = cacar_elemento_universal(
+            driver=self.driver,
+            chave_memoria="gemini_textarea_prompt",
+            descricao_para_ia="Caixa de digitação de texto (textarea/contenteditable) para enviar prompts no chat do Gemini",
+            seletores_rapidos=[
+                'rich-textarea div[contenteditable="true"]',
+                'div[contenteditable="true"][role="textbox"]',
+                '.initial-input-area-container textarea',
+                'textarea[placeholder="Ask Gemini"]',
+                'div[aria-label*="Message"]',
+                'div.editor-container div[contenteditable="true"]',
+            ],
+            palavras_semanticas=[],  # textarea não tem innerText útil
+            permitir_autocura=True,
+            driver_acessibilidade=getattr(self, 'driver_acessibilidade', None),
+            url_gemini=getattr(self, 'url_gemini_acessibilidade', None),
+            etapa="GEMINI_CHAT",
+        )
+        if el and el.is_displayed() and el.is_enabled():
+            return el
         
+        # Fallback com timeout estendido (8s)
         fim = time.time() + 8
         while time.time() < fim:
-            for seletor in seletores:
+            for seletor in ['rich-textarea div[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'textarea']:
                 try:
                     elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                    for el in elementos:
-                        if el.is_displayed() and el.is_enabled():
-                            return el
-                except Exception:
-                    pass
+                    for e in elementos:
+                        if e.is_displayed() and e.is_enabled():
+                            return e
+                except: pass
             time.sleep(0.5)
             
         # Se chegou aqui, passou 8 segundos e a caixa não apareceu.
         _log("⚠️ Caixa de digitação sumiu! Chamando trator para tentar recuperar a tela...")
         if self._superar_bloqueios_e_onboarding():
-            # Trator rodou, vamos tentar achar a caixa uma última vez
-            for seletor in seletores:
+            for seletor in ['rich-textarea div[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'textarea']:
                 try:
                     elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
-                    for el in elementos:
-                        if el.is_displayed() and el.is_enabled():
-                            return el
-                except Exception:
-                    pass
+                    for e in elementos:
+                        if e.is_displayed() and e.is_enabled():
+                            return e
+                except: pass
                     
         salvar_print_debug(self.driver,"ERRO_TEXTAREA_MORTA")
         raise TimeoutException('Falha irrecuperável: A caixa de digitação não existe na tela atual.')
 
     def _obter_botao_enviar(self, permitir_ia: bool = False) -> Optional[WebElement]:
-        """Usa o Hunter para monitorar o botão de envio com suporte opcional a Autocura."""
+        """Busca direta primeiro (instantâneo), Hunter como fallback com self-healing."""
+        # ⚡ CAMINHO RÁPIDO: Seletores diretos (< 1ms)
+        _CSS_ENVIAR = (
+            'button[aria-label="Send message"], button[aria-label="Enviar mensagem"], '
+            'button[data-test-id="send-button"], .send-button-container button'
+        )
+        try:
+            btns = self.driver.find_elements(By.CSS_SELECTOR, _CSS_ENVIAR)
+            for b in btns:
+                if b.is_displayed() and b.get_attribute('disabled') is None and (b.get_attribute('aria-disabled') or '').strip().lower() != 'true':
+                    return b
+        except:
+            pass
+        
+        # 🧠 FALLBACK HUNTER: Se Google mudou a interface
         btn = cacar_elemento_universal(
             driver=self.driver,
             chave_memoria="gemini_botao_enviar",
             descricao_para_ia="Botão de enviar mensagem (Send message) no chat do Gemini",
             seletores_rapidos=[
                 'button[aria-label="Send message"]', 
+                'button[aria-label="Enviar mensagem"]',
                 '.send-button-container button', 
-                '.initial-input-area-container .send-icon',
                 'button[data-test-id="send-button"]'
             ],
-            palavras_semanticas=['send message', 'enviar', 'send-button', 'seta'],
+            palavras_semanticas=['send message', 'enviar mensagem'],
             permitir_autocura=permitir_ia,
             driver_acessibilidade=self.driver_acessibilidade,
             url_gemini=self.url_gemini_acessibilidade,
@@ -451,8 +544,20 @@ class GeminiAnunciosViaFlow:
                     scroll_ao_fim(self.driver)
                     carregando = False
                     try:
-                        loaders = self.driver.find_elements(By.CSS_SELECTOR, 'mat-progress-bar, .uploading, [role="progressbar"], mat-spinner, .loading-spinner, [aria-label*="loading"], [aria-label*="uploading"]')
-                        if loaders and any(l.is_displayed() for l in loaders):
+                        # 🛡️ HUNTER: Detecta loaders de upload de vídeo
+                        loaders = detectar_com_hunter(
+                            driver=self.driver,
+                            chave_memoria="gemini_upload_video_loaders",
+                            descricao_para_ia="Indicadores de loading/upload de vídeo (progress bar, spinner, uploading) no Gemini",
+                            seletores_rapidos=[
+                                'mat-progress-bar', '.uploading', '[role="progressbar"]',
+                                'mat-spinner', '.loading-spinner',
+                                '[aria-label*="loading"]', '[aria-label*="uploading"]',
+                            ],
+                            palavras_semanticas=["loading", "uploading", "progress", "spinner"],
+                            etapa="GEMINI_UPLOAD",
+                        )
+                        if loaders:
                             carregando = True
                     except Exception:
                         pass
@@ -599,33 +704,94 @@ class GeminiAnunciosViaFlow:
         salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_INICIO")
         fim = time.time() + timeout
         
-        # Pausa obrigatória para o Angular processar o clique e renderizar o botão Stop
-        time.sleep(5.0)
-        salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_POS_5SEG")
+        # ⚡ POLL RÁPIDO: Aguarda o Angular renderizar o botão Stop (em vez de sleep(5) cego)
+        _CSS_STOP_RAPIDO = 'button[aria-label="Stop response"], button[aria-label="Parar resposta"], button[aria-label*="Stop"]'
+        deadline_stop = time.time() + 5.0
+        while time.time() < deadline_stop:
+            try:
+                stops = self.driver.find_elements(By.CSS_SELECTOR, _CSS_STOP_RAPIDO)
+                if any(s.is_displayed() for s in stops):
+                    break  # ⚡ Stop apareceu! Pula direto pro monitoramento
+            except:
+                pass
+            time.sleep(0.2)  # Poll a cada 200ms (25x mais rápido que sleep(5))
+        
+        # 🛡️ SELETORES CONHECIDOS (rápidos, sem cache - botões que MUTAM no DOM)
+        _CSS_STOP = 'button[aria-label="Stop response"], button[aria-label="Parar resposta"], button[aria-label*="Stop"]'
+        _CSS_IDLE = (
+            'button[aria-label*="Microphone"], button[aria-label*="Microfone"], '
+            'button[aria-label*="Send message"], button[aria-label*="Enviar mensagem"], '
+            'button.speech_dictation_mic_button'
+        )
+        _CSS_LOADERS = 'mat-progress-bar, .uploading, [role="progressbar"]'
+        
+        # Flag para fallback Hunter (só aciona se os seletores diretos falharem MUITAS vezes)
+        falhas_diretas = 0
         
         while time.time() < fim:
             try:
-                # 1. Procura ativamente pelo botão de STOP na tela
-                botoes_stop = self.driver.find_elements(By.CSS_SELECTOR, 'button.stop, button[aria-label="Stop response"], button[aria-label*="Stop"]')
+                # === 1. DETECTA STOP (seletor direto = instantâneo) ===
+                botoes_stop = self.driver.find_elements(By.CSS_SELECTOR, _CSS_STOP)
+                stop_visivel = any(b.is_displayed() for b in botoes_stop) if botoes_stop else False
                 
-                if botoes_stop and any(b.is_displayed() for b in botoes_stop):
-                    # IA ainda gerando...
-                    pass
+                if stop_visivel:
+                    falhas_diretas = 0  # Reset - os seletores funcionam
+                    pass  # IA ainda gerando...
                 else:
-                    # 2. O Stop SUMIU. Precisamos confirmar se a interface voltou ao estado ocioso
-                    botoes_ociosos = self.driver.find_elements(
-                        By.CSS_SELECTOR, 
-                        'button.speech_dictation_mic_button, button[aria-label*="microphone" i], button[aria-label*="Microfone" i], button.send-button, button[aria-label*="Send" i]'
-                    )
+                    # === 2. DETECTA IDLE (seletor direto) ===
+                    botoes_ociosos = self.driver.find_elements(By.CSS_SELECTOR, _CSS_IDLE)
+                    idle_visivel = any(b.is_displayed() for b in botoes_ociosos) if botoes_ociosos else False
                     
-                    if botoes_ociosos and any(b.is_displayed() for b in botoes_ociosos):
-                        # Confirmação dupla: garante que spinners globais de página também não estão rodando
-                        loaders = self.driver.find_elements(By.CSS_SELECTOR, 'mat-progress-bar, .uploading, [role="progressbar"]')
-                        if not any(l.is_displayed() for l in loaders):
+                    if idle_visivel:
+                        falhas_diretas = 0
+                        # 3. Confirma sem spinners
+                        loaders = self.driver.find_elements(By.CSS_SELECTOR, _CSS_LOADERS)
+                        loader_ativo = any(l.is_displayed() for l in loaders) if loaders else False
+                        
+                        if not loader_ativo:
                             _log("Gatilho detectado: Botão Stop sumiu e interface voltou a ficar ociosa. Geração concluída!")
                             time.sleep(1.0)
                             salvar_print_debug(self.driver,"AGUARDANDO_ANALISE_SUCESSO")
                             return True
+                    else:
+                        falhas_diretas += 1
+                
+                # === SELF-HEALING: Se os seletores diretos não acham NADA por 15 ciclos ===
+                # Significa que o Google mudou a interface e precisamos reaprender
+                if falhas_diretas >= 15:
+                    _log("🧠 [SELF-HEALING] Seletores diretos falharam 15x. Ativando Hunter para reaprender interface...")
+                    falhas_diretas = 0  # Reset para não spammar
+                    
+                    # Hunter SEM cache (permitir_autocura=False) para não envenenar com botões mutáveis
+                    el_stop = cacar_elemento_universal(
+                        driver=self.driver,
+                        chave_memoria="_temp_stop_nao_cachear",
+                        descricao_para_ia="Botão de parar/stop a geração de resposta no Gemini",
+                        seletores_rapidos=['button.stop', 'button[aria-label*="top"]'],
+                        palavras_semanticas=["stop", "parar"],
+                        permitir_autocura=False,
+                        etapa="GEMINI_CHAT"
+                    )
+                    if el_stop and el_stop.is_displayed():
+                        # Aprende o novo seletor para Log (não cacheia)
+                        label = el_stop.get_attribute('aria-label') or 'desconhecido'
+                        _log(f"🧠 [SELF-HEALING] Stop reaprendido: aria-label='{label}'")
+                        continue  # Continua monitorando
+                    
+                    el_idle = cacar_elemento_universal(
+                        driver=self.driver,
+                        chave_memoria="_temp_idle_nao_cachear",
+                        descricao_para_ia="Botão de microfone ou enviar mensagem quando a IA terminou de responder",
+                        seletores_rapidos=['button[aria-label*="icro"]', 'button[aria-label*="end"]'],
+                        palavras_semanticas=["microphone", "microfone", "send", "enviar"],
+                        permitir_autocura=False,
+                        etapa="GEMINI_CHAT"
+                    )
+                    if el_idle and el_idle.is_displayed():
+                        label = el_idle.get_attribute('aria-label') or 'desconhecido'
+                        _log(f"🧠 [SELF-HEALING] Idle reaprendido: aria-label='{label}'. Geração concluída!")
+                        time.sleep(1.0)
+                        return True
                             
             except StaleElementReferenceException:
                 pass
@@ -726,36 +892,41 @@ class GeminiAnunciosViaFlow:
             xpath_remover = "//button[contains(@aria-label, 'Remover') or contains(@aria-label, 'Remove')]"
             qtd_antes = len(self.driver.find_elements(By.XPATH, xpath_remover))
 
-            # --- TENTATIVA DE INPUT DIRETO ---
+            # --- TENTATIVA DE INPUT DIRETO (ULTRA RÁPIDA) ---
             input_file = None
             try:
-                # ⚡ BUSCA RELÂMPAGO: Se o Gemini já deixou o input no DOM
-                input_file = self.driver.find_element(By.CSS_SELECTOR, 'input[type="file"]')
+                # ⚡ BUSCA RELÂMPAGO: Se o Gemini já deixou o input no DOM (comum em uploads subsequentes)
+                inputs = self.driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+                for inp in inputs:
+                    if inp is not None:
+                        input_file = inp
+                        break
             except:
                 pass
 
             if not input_file:
-                # --- FALLBACK 1: BOTÃO PRINCIPAL (USANDO HUNTER PARA BLINDAR) ---
+                # --- CAMINHO COMPLETO: Precisa abrir o menu de upload ---
+                
+                # 1. ACHAR O BOTÃO "+" (com cache do Hunter)
                 seletores_mais = [
                     'button[aria-controls="upload-file-menu"]',
+                    'button[aria-label*="envio de arquivo"]', 
+                    'button[aria-label*="upload file menu"]',
+                    'button[aria-label*="Open upload"]',
+                    'button[aria-label*="Fazer upload"]',
+                    'button[aria-label*="Anexar"]',
                     'mat-icon[fonticon="add_2"]/ancestor::button',
                     'button.upload-card-button',
                     'button[jslog*="188896"]',
                     'button[jslog*="188890"]',
-                    'button[aria-label*="envio de arquivo"]', 
-                    'button[aria-label*="upload file menu"]',
-                    'button[aria-label*="Fazer upload"]', # 🛡️ Adicionado para PT-BR
-                    'button[aria-label*="Anexar"]'        # 🛡️ Adicionado para PT-BR
                 ]
                 
-                # 🚑 INTEGRAÇÃO SELF-HEALING: Tenta os seletores acima usando o Hunter Universal
                 btn = cacar_elemento_universal(
                     driver=self.driver,
                     chave_memoria="gemini_btn_mais_anexo",
                     descricao_para_ia="O botão de '+' ao lado da caixa de texto no chat do Gemini, usado para fazer upload de imagens ou anexar arquivos.",
                     seletores_rapidos=seletores_mais,
-                    # 🚨 CORREÇÃO CRÍTICA: Retirada a palavra 'mais' e 'add' que causavam cliques falsos em menus
-                    palavras_semanticas=['upload', 'anexar', 'arquivo', 'imagem'],
+                    palavras_semanticas=['upload', 'anexar', 'arquivo'],
                     permitir_autocura=True,
                     driver_acessibilidade=getattr(self, 'driver_acessibilidade', None),
                     url_gemini=getattr(self, 'url_gemini_acessibilidade', None),
@@ -764,46 +935,56 @@ class GeminiAnunciosViaFlow:
 
                 if btn:
                     try:
-                        # Se o botão já está com a classe "close", o menu já abriu
-                        if btn.is_displayed() and "close" not in btn.get_attribute("class"):
-                            # Garante que o menu lateral (que abriu por engano) seja fechado com ESC
+                        if btn.is_displayed() and "close" not in (btn.get_attribute("class") or ""):
                             from selenium.webdriver.common.action_chains import ActionChains
                             from selenium.webdriver.common.keys import Keys
                             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
                             time.sleep(0.1)
                             
                             js_click(self.driver, btn)
-                            #_log(f'Botão de anexo acionado.')
-                            #time.sleep(0.1) 
+                            time.sleep(0.3)
                             
-                            # SNIPER DE POPUP DE IMAGEM
-                            try:
-                                btn_agree = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="upload-image-agree-button"]')
-                                if btn_agree and btn_agree[0].is_displayed():
-                                    _log("🛡️ Popup de 'Política de Imagens' detectado após clique. Clicando em Agree...")
-                                    js_click(self.driver, btn_agree[0])
-                                    time.sleep(1.5) 
-                                    js_click(self.driver, btn)
-                                    _log("Re-clicando no botão de upload após aceitar as políticas.")
-                                    time.sleep(0.5)
-                            except:
-                                pass
-                        elif btn.is_displayed() and "close" in btn.get_attribute("class"):
-                            _log('Menu de upload já está aberto na tela.')
+                            # SNIPER DE POPUP DE IMAGEM (só na primeira vez da sessão)
+                            if not getattr(self, '_agree_popup_ja_fechado', False):
+                                try:
+                                    btn_agree = self.driver.find_elements(By.CSS_SELECTOR, 
+                                        'button[data-test-id="upload-image-agree-button"]')
+                                    if btn_agree and btn_agree[0].is_displayed():
+                                        _log("🛡️ Popup de 'Política de Imagens' detectado. Clicando em Agree...")
+                                        js_click(self.driver, btn_agree[0])
+                                        self._agree_popup_ja_fechado = True
+                                        time.sleep(1.0) 
+                                        js_click(self.driver, btn)
+                                        time.sleep(0.3)
+                                except:
+                                    pass
                     except: 
                         pass
 
-                # --- FALLBACK 2: BOTÃO DENTRO DO MODAL ---
+                # 2. BOTÃO "Enviar arquivo" DENTRO DO MENU (espera curta)
                 try:
-                    btn_enviar = WebDriverWait(self.driver, 4).until(EC.element_to_be_clickable((
+                    btn_enviar = WebDriverWait(self.driver, 2).until(EC.element_to_be_clickable((
                         By.CSS_SELECTOR, 'button[data-test-id="local-images-files-uploader-button"]'
                     )))
                     js_click(self.driver, btn_enviar)
+                    time.sleep(0.3)
                 except:
                     pass 
 
+                # 3. AGORA BUSCA O INPUT (deve ter aparecido após os cliques)
+                try:
+                    inputs = self.driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+                    for inp in inputs:
+                        if inp is not None:
+                            input_file = inp
+                            break
+                except:
+                    pass
+
             # --- VALIDAÇÃO E INJEÇÃO ---
-            input_file = self._encontrar_input_file_visivel_ou_oculto(timeout=10)
+            if not input_file:
+                # 🐌 FALLBACK LENTO: Só usa o loop pesado se tudo acima falhou
+                input_file = self._encontrar_input_file_visivel_ou_oculto(timeout=10)
             
             self.driver.execute_script(
                 "arguments[0].style.display='block'; arguments[0].style.visibility='visible'; arguments[0].style.opacity=1; arguments[0].style.height='1px'; arguments[0].style.width='1px';",
@@ -835,9 +1016,31 @@ class GeminiAnunciosViaFlow:
     ) -> str:
         _log(f'Enviando prompt ({len(prompt)} chars)...')
 
-        # --- NOVO: COOLDOWN CONTRA ERRO 13 ---
-        time.sleep(2.5) # Espera o Gemini "respirar" antes de cada envio
-        # -------------------------------------
+        # ⚡ COOLDOWN INTELIGENTE: Espera a textarea ficar pronta (em vez de sleep(2.5) cego)
+        deadline_cool = time.time() + 3.0
+        while time.time() < deadline_cool:
+            try:
+                ta = self.driver.find_elements(By.CSS_SELECTOR, 'div[contenteditable="true"], rich-textarea div[contenteditable]')
+                if ta and ta[0].is_displayed() and ta[0].is_enabled():
+                    break
+            except: pass
+            time.sleep(0.2)
+
+        # 🛡️ ANTI-POPUP: Fecha popups promocionais (Deep Research, etc.) que bloqueiam o textarea
+        try:
+            popups_dismiss = self.driver.find_elements(By.XPATH,
+                "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'no thanks') or "
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'não, obrigado') or "
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'dismiss') or "
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'fechar')]"
+            )
+            for btn in popups_dismiss:
+                if btn.is_displayed():
+                    _log("🛡️ Popup promocional detectado (Deep Research?). Fechando...")
+                    js_click(self.driver, btn)
+                    time.sleep(0.5)
+                    break
+        except: pass
 
         salvar_print_debug(self.driver,"PROMPT_PREPARACAO")
         
@@ -846,7 +1049,7 @@ class GeminiAnunciosViaFlow:
             textarea = self._obter_textarea_prompt()
             
             textarea.click()
-            time.sleep(0.5)
+            time.sleep(0.1)
             
             # === SOLUÇÃO DEFINITIVA HEADLESS: Digitação Real Fragmentada ===
             # Sem Pyperclip, sem TrustedHTML. Remove emojis nativamente 
@@ -861,7 +1064,7 @@ class GeminiAnunciosViaFlow:
                     "arguments[0].focus(); document.execCommand('insertText', false, arguments[1]);",
                     textarea, prompt_seguro
                 )
-                time.sleep(0.5)
+                time.sleep(0.2)
                 # Dá um espaço final para despertar os gatilhos do Angular
                 textarea.send_keys(" ")
             except Exception as e:
@@ -1144,11 +1347,18 @@ class GeminiAnunciosViaFlow:
             
             btn_download = None
             for _ in range(10):
-                botoes = self.driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="download-generated-image-button"], button[aria-label="Download full size image"]')
-                for b in botoes:
-                    if b.is_displayed():
-                        btn_download = b
-                        break
+                btn_download = cacar_elemento_universal(
+                    driver=self.driver,
+                    chave_memoria="gemini_btn_download_img",
+                    descricao_para_ia="Botão de download de imagem gerada na galeria do Gemini",
+                    seletores_rapidos=[
+                        'button[data-test-id="download-generated-image-button"]',
+                        'button[aria-label="Download full size image"]',
+                    ],
+                    palavras_semanticas=["download", "baixar", "save"],
+                    etapa="GEMINI_DOWNLOAD_IMG",
+                    permitir_autocura=False,
+                )
                 if btn_download:
                     break
                 time.sleep(0.1)
@@ -1479,6 +1689,7 @@ class GeminiAnunciosViaFlow:
 
         prompt_mestre = PROMPT_MESTRE_ROTEIRO.format(
             qtd_cenas=qtd_cenas,
+            qtd_cenas_menos_1=qtd_cenas - 1,
             nome_modelo=desc_nome_modelo,
             desc_maos=desc_maos,
             desc_corpo=desc_corpo,

@@ -288,7 +288,7 @@ def extrair_e_salvar_legenda(texto_roteiro: str, caminho_arquivo: Path, num_rote
             if caminho_arquivo.exists():
                 conteudo_atual = caminho_arquivo.read_text(encoding='utf-8')
                 conteudo_atual = re.sub(
-                    rf'=== LEGENDA {num_roteiro} ===.*?(?==== LEGENDA|\Z)',
+                    rf'=== LEGENDA {num_roteiro} ===.*?(?=\n=== LEGENDA|\Z)',
                     '', conteudo_atual, flags=re.DOTALL
                 )
                 novo_conteudo = conteudo_atual.strip() + "\n\n" + bloco_salvar
@@ -422,3 +422,228 @@ def limpar_cache_python():
             # print(f"🧹 Cache limpo: {pycache}")
         except:
             pass
+
+# ==========================================
+# 🌐 GUARD DE CONECTIVIDADE (INTERNET)
+# ==========================================
+def verificar_internet(timeout: int = 5) -> bool:
+    """Testa conectividade com um HEAD request rápido ao Google. Retorna True se online."""
+    import urllib.request
+    try:
+        urllib.request.urlopen("https://www.google.com", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+def aguardar_internet(intervalo: int = 60) -> None:
+    """
+    Bloqueia a execução até a internet voltar.
+    Testa a cada `intervalo` segundos (padrão: 60s).
+    Se já estiver online, retorna imediatamente sem logar nada.
+    """
+    if verificar_internet():
+        return  # Já está online, segue sem logar
+    
+    _log("🌐 INTERNET OFFLINE DETECTADA! Pausando toda execução...", "SISTEMA")
+    _log(f"🌐 Retentando conexão a cada {intervalo} segundos. O sistema retomará automaticamente.", "SISTEMA")
+    
+    tentativa = 0
+    while True:
+        tentativa += 1
+        time.sleep(intervalo)
+        
+        if verificar_internet():
+            _log(f"🌐 ✅ Internet restabelecida após {tentativa} tentativa(s)! Retomando execução...", "SISTEMA")
+            # Respiro extra para garantir estabilidade da conexão
+            time.sleep(5)
+            return
+        else:
+            _log(f"🌐 Tentativa {tentativa}: Ainda offline. Próxima verificação em {intervalo}s...", "SISTEMA")
+
+# ==========================================
+# 📋 METADADOS UNIFICADO
+# ==========================================
+def anexar_ao_metadados(caminho_metadados: Path, titulo: str, conteudo: str) -> None:
+    """Anexa uma seção formatada ao arquivo unificado metadados.txt."""
+    from datetime import datetime
+    timestamp = datetime.now().strftime('%H:%M:%S')
+    separador = "━" * 60
+    
+    # =========================================================================
+    # 🛡️ GUARD ANTI-BOLA-DE-NEVE: Detecta auto-referência do metadados
+    # Se o conteúdo contém marcadores internos do próprio metadados, significa
+    # que o sistema está tentando gravar o arquivo inteiro como conteúdo de um
+    # bloco. Isso causa duplicação exponencial a cada retry.
+    # =========================================================================
+    _marcadores_internos = ["📦 DADOS DO PRODUTO", "🎯 PROMPT ENVIADO", "💬 RESPOSTA:", "=== PROMPT A ===", "=== PROMPT B ==="]
+    if conteudo and any(m in conteudo for m in _marcadores_internos):
+        _log(f"🚨 GUARD ANTI-BOLA-DE-NEVE: Conteúdo para '{titulo}' contém marcadores internos do metadados! Gravação BLOQUEADA.", "SISTEMA")
+        _log(f"🚨 Tamanho do conteúdo rejeitado: {len(conteudo)} chars (esperado <2000 para um prompt).", "SISTEMA")
+        return  # 🛡️ NÃO grava — impede a corrupção em cascata
+    
+    # --- FORMATAÇÃO PARA LEITURA HUMANA ---
+    texto = conteudo.strip()
+    
+    # 1. Quebra de linha antes de cada [Cena X]
+    texto = re.sub(r'(?<!\n)\s*(\[[Cc]ena\s*\d+\])', r'\n\n\1', texto)
+    
+    # 2. Quebra de linha antes de === VARIANTE X ===
+    texto = re.sub(r'(?<!\n)\s*(===\s*VARIANTE\s*\d+\s*===)', r'\n\n\1', texto)
+    
+    # 3. Remove blocos [Legenda] (já salvos separadamente como === LEGENDA ===)
+    texto = re.sub(r'\[Ll?egenda\]\s*.*?(?=\n===|\n\n|$)', '', texto, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 4. Limpa linhas em branco excessivas (máx 2 consecutivas)
+    texto = re.sub(r'\n{3,}', '\n\n', texto)
+    
+    bloco = f"\n\n{separador}\n{titulo} [{timestamp}]\n{separador}\n\n{texto.strip()}\n"
+    
+    caminho_metadados.parent.mkdir(parents=True, exist_ok=True)
+    with open(caminho_metadados, 'a', encoding='utf-8') as f:
+        f.write(bloco)
+
+def formatar_dados_produto(dados_ia: dict) -> str:
+    """Formata os dados do produto para a seção inicial do metadados.txt (bonito + machine-readable)."""
+    import ast
+    
+    nome = dados_ia.get('nome_produto', 'Não lido')
+    resumido = dados_ia.get('nome_resumido', 'ProdutoGenerico')
+    preco = dados_ia.get('preco_condicoes', 'Não lido')
+    beneficios_raw = dados_ia.get('beneficios', 'Não lido')
+    
+    # Formata benefícios como lista visual
+    beneficios_lista = []
+    if isinstance(beneficios_raw, list):
+        beneficios_lista = beneficios_raw
+    elif isinstance(beneficios_raw, str):
+        try:
+            parsed = ast.literal_eval(beneficios_raw)
+            if isinstance(parsed, list):
+                beneficios_lista = parsed
+        except:
+            beneficios_lista = [beneficios_raw]
+    
+    beneficios_fmt = "\n".join(f"    • {b}" for b in beneficios_lista) if beneficios_lista else f"    • {beneficios_raw}"
+    beneficios_inline = " | ".join(beneficios_lista) if beneficios_lista else str(beneficios_raw)
+    
+    separador = "━" * 60
+    header = "═" * 58
+    
+    return f"""
+    {separador}
+    📦 DADOS DO PRODUTO
+    {separador}
+    NOME_REAL: {nome}
+    NOME_RESUMIDO: {resumido}
+    PRECO_E_CONDICOES: {preco}
+    BENEFICIOS_EXTRAS: {beneficios_inline}
+
+    Benefícios detalhados:
+    {beneficios_fmt}
+    """
+
+
+def consolidar_metadados_final(pasta_task: Path) -> None:
+    """
+    Consolida os 4 arquivos separados em um único metadados.txt para entrega.
+    
+    Ordem final:
+      1. 📦 DADOS DO PRODUTO        (de metadados.txt)
+      2. 📝 LEGENDAS                 (de legendas.txt)
+      3. 🎬 ROTEIROS                 (Diretor de Arte [PROMPT A/B] + Roteiros técnicos [de roteiros.txt])
+      4. 📋 PROMPTS E RESPOSTAS      (log completo de prompts.txt)
+    """
+    separador = "━" * 60
+    partes = []
+    
+    # =====================================================================
+    # 1. 📦 DADOS DO PRODUTO
+    # =====================================================================
+    meta_path = pasta_task / "metadados.txt"
+    if meta_path.exists():
+        produto = meta_path.read_text(encoding='utf-8').strip()
+        # Se já tem o separador/header, usa como está
+        if "DADOS DO PRODUTO" in produto:
+            partes.append(produto)
+        else:
+            partes.append(f"{separador}\n📦DADOS DO PRODUTO\n{separador}\n{produto}")
+    
+    # =====================================================================
+    # 2. 📝 LEGENDAS
+    # =====================================================================
+    legendas_path = pasta_task / "legendas.txt"
+    if legendas_path.exists():
+        legendas = legendas_path.read_text(encoding='utf-8').strip()
+        if legendas:
+            partes.append(f"\n\n{separador}\n📝 LEGENDAS\n{separador}\n{legendas}")
+    
+    # =====================================================================
+    # 3. 🎬 ROTEIROS (Resultados do Diretor de Arte + Roteiros técnicos)
+    # =====================================================================
+    secao_roteiros = []
+    
+    # 3a. Diretor de Arte: PROMPT A / PROMPT B (resultados — os prompts de imagem)
+    prompts_path = pasta_task / "prompts.txt"
+    if prompts_path.exists():
+        prompts_conteudo = prompts_path.read_text(encoding='utf-8')
+        
+        # Extrai PROMPT A e PROMPT B
+        for marcador in ["PROMPT A", "PROMPT B"]:
+            tag = f"=== {marcador} ==="
+            if tag in prompts_conteudo:
+                bloco = prompts_conteudo.split(tag)[1]
+                # Corta no próximo ===
+                if "\n===" in bloco:
+                    bloco = bloco.split("\n===")[0]
+                # Corta no próximo separador ━━━
+                if "━━━" in bloco:
+                    bloco = bloco.split("━━━")[0]
+                bloco = bloco.strip()
+                if bloco:
+                    secao_roteiros.append(f"=== {marcador} ===\n{bloco}")
+    
+    # 3b. Roteiros técnicos de vídeo (ROTEIRO X_VARIANTE_Y)
+    roteiros_path = pasta_task / "roteiros.txt"
+    if roteiros_path.exists():
+        roteiros = roteiros_path.read_text(encoding='utf-8').strip()
+        if roteiros:
+            secao_roteiros.append(roteiros)
+    
+    if secao_roteiros:
+        partes.append(f"\n\n{separador}\n🎬 ROTEIROS\n{separador}\n\n" + "\n\n".join(secao_roteiros))
+    
+    # =====================================================================
+    # 4. 📋 PROMPTS E RESPOSTAS (log cronológico completo)
+    # =====================================================================
+    if prompts_path.exists():
+        prompts_conteudo = prompts_path.read_text(encoding='utf-8').strip()
+        
+        # Remove os blocos === PROMPT A/B === que já foram para a seção 3
+        prompts_log = prompts_conteudo
+        for tag in ["=== PROMPT A ===", "=== PROMPT B ==="]:
+            if tag in prompts_log:
+                antes = prompts_log.split(tag)[0]
+                depois_parts = prompts_log.split(tag)[1:]
+                resto = ""
+                for p in depois_parts:
+                    # Pega tudo depois do próximo === ou ━━━
+                    if "\n===" in p:
+                        resto += "\n===" + p.split("\n===", 1)[1]
+                    elif "━━━" in p:
+                        resto += "━━━" + p.split("━━━", 1)[1]
+                prompts_log = antes + resto
+        
+        prompts_log = re.sub(r'\n{4,}', '\n\n\n', prompts_log).strip()
+        
+        if prompts_log:
+            partes.append(f"\n\n{separador}\n📋 LOG DE PROMPTS E RESPOSTAS\n{separador}\n\n{prompts_log}")
+    
+    # =====================================================================
+    # GRAVA O ARQUIVO CONSOLIDADO
+    # =====================================================================
+    texto_final = "\n".join(partes).strip()
+    texto_final = re.sub(r'\n{4,}', '\n\n\n', texto_final)
+    
+    meta_path.write_text(texto_final + "\n", encoding='utf-8')
+    _log(f"✅ Metadados consolidado para entrega: {meta_path.name} ({len(texto_final)} chars)")
+

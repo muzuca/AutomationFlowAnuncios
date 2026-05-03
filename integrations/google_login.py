@@ -21,7 +21,7 @@ from config import GoogleAccount, Settings
 from integrations.gemini import GeminiAnunciosViaFlow
 from integrations.waits import wait_for_clickable, wait_for_visible
 # Central de utilitários
-from integrations.utils import _get_logs_dir, _log, salvar_print_debug, limpar_meus_zumbis
+from integrations.utils import _get_logs_dir, _log, salvar_print_debug, limpar_meus_zumbis, registrar_pid_processo
 
 
 def login_google(driver: WebDriver, settings: Settings, account: GoogleAccount, driver_acessibilidade: WebDriver | None = None) -> None:
@@ -286,7 +286,7 @@ def inicializar_medico_seguro(settings: Settings, url_alvo: str) -> WebDriver:
     
     _log("🏥 Verificando sessão da Unidade Médica em background...", "SISTEMA")
     driver = create_driver(settings, perfil_acessibilidade=True)
-    driver.set_window_size(1920, 1080) # 🛡️ FORÇA RESOLUÇÃO DESKTOP PARA O HEADLESS
+    driver.set_window_size(800, 600) # 🛡️ FORÇA RESOLUÇÃO DESKTOP PARA O HEADLESS
     
     driver.get(settings.google_login_url)
     time.sleep(3)
@@ -334,6 +334,7 @@ def inicializar_medico_seguro(settings: Settings, url_alvo: str) -> WebDriver:
         _log("Abrindo janela de resgate VISÍVEL na sua tela...", "SISTEMA")
         service = Service(ChromeDriverManager().install())
         driver_resgate = webdriver.Chrome(service=service, options=options_visivel)
+        registrar_pid_processo(driver_resgate.service.process.pid)  # 🛡️ Registra PID anti-zumbi
         driver_resgate.get(settings.google_login_url)
         
         sys.stdout.write('\a') # Apita
@@ -347,7 +348,7 @@ def inicializar_medico_seguro(settings: Settings, url_alvo: str) -> WebDriver:
         
         _log("Login concluído. Retornando Unidade Médica para as sombras (Headless)...", "SISTEMA")
         driver = create_driver(settings, perfil_acessibilidade=True)
-        driver.set_window_size(1920, 1080) # 🛡️ FORÇA RESOLUÇÃO DESKTOP DE NOVO
+        driver.set_window_size(800, 600) # 🛡️ FORÇA RESOLUÇÃO DESKTOP DE NOVO
         
     # 🚀 JÁ LOGADO, VAI PARA A URL ALVO (TREINADA OU PADRÃO) E DEVOLVE O DRIVER
     driver.get(url_alvo)
@@ -415,6 +416,7 @@ def realizar_checkup_medico_pre_voo(settings) -> None:
         # 2. Lança o navegador e vai para o Gemini
         service = Service(ChromeDriverManager().install())
         driver_setup = webdriver.Chrome(service=service, options=options)
+        registrar_pid_processo(driver_setup.service.process.pid)  # 🛡️ Registra PID anti-zumbi
         
         url_gemini = getattr(settings, 'gemini_url', 'https://gemini.google.com/app')
         driver_setup.get(url_gemini)

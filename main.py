@@ -46,7 +46,11 @@ from integrations.utils import (
     extrair_e_salvar_legenda,
     salvar_ultima_conta_env,
     limpar_logs_antigos,
-    limpar_meus_zumbis
+    limpar_meus_zumbis,
+    aguardar_internet,
+    verificar_internet,
+    anexar_ao_metadados,
+    formatar_dados_produto
 )
 
 def main() -> None:
@@ -203,14 +207,17 @@ def main() -> None:
                     continue
                 # --------------------------------------------------
 
+                # 🌐 GUARD DE INTERNET: Antes de tentar qualquer coisa, verifica conectividade
+                aguardar_internet()
+
                 log_step(f"▶ INICIANDO TENTATIVA {falhas_consecutivas + 1} | Conta [{idx_conta}]: {account.email}")
 
                 driver = None
+                driver_medico = None
                 try:
                     log_step('Preparando ambiente e navegador...')
                     driver = create_driver(settings)
                     
-                    # 🚨 LOGIN AGORA SEM O DRIVER DE ACESSIBILIDADE
                     login_google(driver, settings, account)
                     dismiss_chrome_native_popup_with_retry(driver)
                     
@@ -218,13 +225,21 @@ def main() -> None:
                     salvar_ultima_conta_env(account.email)
                     url_gem = getattr(settings, 'gemini_url', 'https://gemini.google.com/app/pt')
 
-                    # 🚨 DRIVERS DE ACESSIBILIDADE REMOVIDOS AQUI TAMBÉM
+                    # 🏥 INICIALIZAÇÃO DA UNIDADE MÉDICA (Self-Healing IA)
+                    url_gem_medico = url_gem
+                    try:
+                        driver_medico = inicializar_medico_seguro(settings, url_gem_medico)
+                        log_success('🏥 Unidade Médica online e pronta para resolução autônoma.')
+                    except Exception as e_med:
+                        log_error(f'⚠️ Médico indisponível nesta sessão (não crítico): {str(e_med)[:60]}')
+                        driver_medico = None
+
                     gemini = GeminiAnunciosViaFlow(
                         driver, 
                         url_gemini=url_gem, 
                         timeout=40,
-                        driver_acessibilidade=None,         
-                        url_gemini_acessibilidade=None
+                        driver_acessibilidade=driver_medico,         
+                        url_gemini_acessibilidade=url_gem_medico if driver_medico else None
                     )    
 
                     # ACIONAMENTO DO TANQUE: Aqui ele vai abrir, checar bloqueios e usar o trator
@@ -304,12 +319,7 @@ def main() -> None:
                                 renomear_seguro('arquivo_referencia', 'Ref_Extra')
                                 
                                 # 2. Salva o TXT com a riqueza de detalhes
-                                conteudo_txt = (
-                                    f"NOME_REAL: {dados_ia.get('nome_produto', 'Não lido')}\n"
-                                    f"NOME_RESUMIDO: {dados_ia.get('nome_resumido', 'ProdutoGenerico')}\n"
-                                    f"PRECO_E_CONDICOES: {dados_ia.get('preco_condicoes', 'Não lido')}\n"
-                                    f"BENEFICIOS_EXTRAS: {dados_ia.get('beneficios', 'Não lido')}\n"
-                                )
+                                conteudo_txt = formatar_dados_produto(dados_ia)
                                 caminho_metadados.write_text(conteudo_txt, encoding='utf-8')
                             else:
                                 raise Exception("IA falhou ao gerar o JSON de classificação de arquivos.")
@@ -357,15 +367,17 @@ def main() -> None:
                     partes_caminho_task = Path(prepared.task.folder_path).parts
                     estilo_filmagem_pasta = partes_caminho_task[-2] if len(partes_caminho_task) >= 2 else ""
 
-                    # --- CHECKPOINT INTELIGENTE: EXISTE AO MENOS UM ROTEIRO? (Atualizado para roteiros.txt) ---
+                    # --- CHECKPOINT INTELIGENTE: EXISTE AO MENOS UM ROTEIRO? ---
                     tem_roteiro_pronto = False
-                    caminho_roteiros_unificado = Path(task.folder_path) / "roteiros.txt"
-                    
-                    if caminho_roteiros_unificado.exists():
-                        conteudo_check = caminho_roteiros_unificado.read_text(encoding='utf-8')
-                        for r_idx_check in range(1, qtd_roteiros + 1):
-                            if f"=== ROTEIRO {r_idx_check} ===" in conteudo_check and len(conteudo_check) > 500:
-                                tem_roteiro_pronto = True
+                    # Busca em metadados.txt (novo) ou roteiros.txt (legado)
+                    for arquivo_check in [Path(task.folder_path) / "metadados.txt", Path(task.folder_path) / "roteiros.txt"]:
+                        if arquivo_check.exists():
+                            conteudo_check = arquivo_check.read_text(encoding='utf-8')
+                            for r_idx_check in range(1, qtd_roteiros + 1):
+                                if f"=== ROTEIRO {r_idx_check}" in conteudo_check and len(conteudo_check) > 500:
+                                    tem_roteiro_pronto = True
+                                    break
+                            if tem_roteiro_pronto:
                                 break
                     
                     if tem_roteiro_pronto:
@@ -466,6 +478,7 @@ def main() -> None:
                         sufixo_rot = f"Roteiro{r_idx}"
                         caminho_roteiros_unificado = Path(task.folder_path) / "roteiros.txt"
                         caminho_legendas_unificado = Path(task.folder_path) / "legendas.txt"
+                        caminho_prompts_log = Path(task.folder_path) / "prompts.txt"
                         caminho_img_base_roteiro = Path(task.folder_path) / f"IA_{sufixo_rot}.png"
 
                         # --- CHECKPOINT MESTRE: SE O VÍDEO FINAL JÁ EXISTE NA ENTREGA, PULA TUDO DESSE ROTEIRO ---
@@ -475,10 +488,15 @@ def main() -> None:
                             
                             if caminho_roteiros_unificado.exists():
                                 cont_total = caminho_roteiros_unificado.read_text(encoding='utf-8')
-                                if f"=== ROTEIRO {r_idx} ===" in cont_total:
-                                    bloco = cont_total.split(f"=== ROTEIRO {r_idx} ===")[1]
-                                    bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
-                                    roteiros_anteriores_textos.append(bloco.strip())
+                            elif caminho_metadados.exists():  # fallback legado
+                                cont_total = caminho_metadados.read_text(encoding='utf-8')
+                            else:
+                                cont_total = ""
+                                
+                            if f"=== ROTEIRO {r_idx} ===" in cont_total:
+                                bloco = cont_total.split(f"=== ROTEIRO {r_idx} ===")[1]
+                                bloco = bloco.split("\n===")[0] if "\n===" in bloco else bloco
+                                roteiros_anteriores_textos.append(bloco.strip())
                             
                             continue 
 
@@ -494,8 +512,8 @@ def main() -> None:
                                 flow_bot_img = GoogleFlowAutomation(
                                     driver, 
                                     url_flow=url_flw,
-                                    driver_acessibilidade=None,     
-                                    url_gemini_acessibilidade=None 
+                                    driver_acessibilidade=driver_medico,     
+                                    url_gemini_acessibilidade=url_gem_medico if driver_medico else None 
                                 )
                                 
                                 # --- BUSCA DE IDENTIDADE (MODELO) VIA .ENV ---
@@ -525,16 +543,51 @@ def main() -> None:
                                 prompt_b = ""
                                 precisa_gerar_prompts = True
                                 
-                                if caminho_prompts_ab.exists():
-                                    try:
-                                        conteudo_prompts = caminho_prompts_ab.read_text(encoding='utf-8')
-                                        if "=== PROMPT B ===" in conteudo_prompts:
-                                            prompt_a = conteudo_prompts.split("=== PROMPT B ===")[0].replace("=== PROMPT A ===", "").strip()
-                                            prompt_b = conteudo_prompts.split("=== PROMPT B ===")[1].strip()
-                                            log_success(f"🚀 CHECKPOINT ALCANÇADO: Prompts carregados do arquivo {caminho_prompts_ab.name}. Pulando Gemini!")
-                                            precisa_gerar_prompts = False
-                                    except Exception as e:
-                                        log_error(f"Erro ao ler checkpoint dos prompts: {e}")
+                                # Tenta ler de prompts.txt > metadados.txt (legado) > arquivo legado
+                                for fonte_prompts in [caminho_prompts_log, caminho_metadados, caminho_prompts_ab]:
+                                    if fonte_prompts.exists():
+                                        try:
+                                            conteudo_prompts = fonte_prompts.read_text(encoding='utf-8')
+                                            if "=== PROMPT B ===" in conteudo_prompts:
+                                                # 🛡️ CORREÇÃO: Pega SÓ o que vem DEPOIS do último "=== PROMPT A ==="
+                                                # Antes pegava TUDO antes de PROMPT B (incluindo metadados com emojis)
+                                                bloco_a = conteudo_prompts.split("=== PROMPT B ===")[0]
+                                                if "=== PROMPT A ===" in bloco_a:
+                                                    prompt_a = bloco_a.split("=== PROMPT A ===")[-1].strip()
+                                                else:
+                                                    prompt_a = bloco_a.strip()
+                                                # Trunca no próximo separador ━ (se existir)
+                                                if "━━━" in prompt_a:
+                                                    prompt_a = prompt_a.split("━━━")[0].strip()
+                                                
+                                                # Pega PROMPT B e trunca no próximo separador
+                                                bloco_b = conteudo_prompts.split("=== PROMPT B ===")[1]
+                                                if "━━━" in bloco_b:
+                                                    bloco_b = bloco_b.split("━━━")[0]
+                                                prompt_b = bloco_b.strip()
+                                                log_success(f"🚀 CHECKPOINT ALCANÇADO: Prompts carregados de {fonte_prompts.name}. Pulando Gemini!")
+                                                precisa_gerar_prompts = False
+                                                break
+                                        except Exception as e:
+                                            log_error(f"Erro ao ler checkpoint dos prompts: {e}")
+
+                                # 🛡️ CAMADA 2: Validação de integridade dos prompts extraídos
+                                # Se os prompts contêm marcadores internos do metadados, estão corrompidos
+                                if not precisa_gerar_prompts:
+                                    _marcadores_lixo = ["📦 DADOS DO PRODUTO", "🎯 PROMPT ENVIADO", "💬 RESPOSTA:", "━━━━━━"]
+                                    MAX_PROMPT_IMG = 2000  # Um prompt de imagem do Flow tem ~300-800 chars
+                                    
+                                    prompt_a_sujo = any(m in prompt_a for m in _marcadores_lixo)
+                                    prompt_b_sujo = any(m in prompt_b for m in _marcadores_lixo)
+                                    prompt_a_grande = len(prompt_a) > MAX_PROMPT_IMG
+                                    prompt_b_grande = len(prompt_b) > MAX_PROMPT_IMG
+                                    
+                                    if prompt_a_sujo or prompt_b_sujo or prompt_a_grande or prompt_b_grande:
+                                        log_error(f"🚨 GUARD: Prompts corrompidos detectados! (A: {len(prompt_a)} chars {'SUJO' if prompt_a_sujo else 'OK'} | B: {len(prompt_b)} chars {'SUJO' if prompt_b_sujo else 'OK'})")
+                                        log_error("🚨 Forçando regeneração pelo Diretor de Arte...")
+                                        precisa_gerar_prompts = True
+                                        prompt_a = ""
+                                        prompt_b = ""
 
                                 if precisa_gerar_prompts:
                                     log_step(f"ETAPA IA: Diretor de Arte criando prompts para cena {estilo_filmagem_pasta}...")
@@ -543,8 +596,8 @@ def main() -> None:
                                             driver, 
                                             url_gemini=url_gem, 
                                             timeout=300, 
-                                            driver_acessibilidade=None,          
-                                            url_gemini_acessibilidade=None
+                                            driver_acessibilidade=driver_medico,          
+                                            url_gemini_acessibilidade=url_gem_medico if driver_medico else None
                                         )                                     
                                         gemini_diretor.abrir_gemini()
                                         sucesso_diretor = False
@@ -577,8 +630,12 @@ def main() -> None:
                                                     match_b = re.search(r'(VARIANTE\s*B:.*)', texto_diretor, re.IGNORECASE | re.DOTALL)
                                                     prompt_b = match_b.group(1).strip() if match_b else prompt_a + " Subtle dynamic lighting shift."
                                                     
-                                                    # 💾 SALVA O ARQUIVO FÍSICO DO CHECKPOINT
-                                                    caminho_prompts_ab.write_text(f"=== PROMPT A ===\n{prompt_a}\n\n=== PROMPT B ===\n{prompt_b}", encoding='utf-8')
+                                                    # 💾 SALVA EM ARQUIVOS SEPARADOS
+                                                    anexar_ao_metadados(caminho_prompts_log, f"🎯 PROMPT ENVIADO: Diretor de Arte — {sufixo_rot}", prompt_instrucao)
+                                                    anexar_ao_metadados(caminho_prompts_log, f"💬 RESPOSTA: Diretor de Arte — {sufixo_rot}", texto_diretor)
+                                                    # Checkpoint: PROMPT A/B ficam no prompts.txt para leitura rápida
+                                                    salvar_bloco_unificado(caminho_prompts_log, "PROMPT A", prompt_a)
+                                                    salvar_bloco_unificado(caminho_prompts_log, "PROMPT B", prompt_b)
                                                     
                                                     log_success("✅ Prompts A e B gerados, separados e salvos no Checkpoint!")
                                                     sucesso_diretor = True
@@ -606,10 +663,17 @@ def main() -> None:
                                     
                                     # 🚀 AQUI TAMBÉM NO FLOW: MODELO ANTES DO PRODUTO 🚀
                                     
+                                    # 🛡️ CAMADA 4: Validação final antes de enviar ao Flow
+                                    for _nome, _prompt in [("prompt_a", prompt_a), ("prompt_b", prompt_b)]:
+                                        if len(_prompt) > 2000 or "━━━" in _prompt or "📦" in _prompt:
+                                            raise Exception(f"🚨 GUARD FINAL: {_nome} CORROMPIDO ({len(_prompt)} chars). Impossível continuar.")
+                                    log_step(f"✅ Prompts validados: A={len(prompt_a)} chars | B={len(prompt_b)} chars")
+                                    
                                     # 1. Gera Variante A
                                     log_step(f"Gerando Imagem Base Variante A ({sufixo_rot}) no Flow...")
+                                    anexar_ao_metadados(caminho_prompts_log, f"🎨 PROMPT FLOW: Imagem A — {sufixo_rot}", prompt_a)
                                     flow_bot_img.gerar_imagem_base(
-                                        caminho_referencia=primeira_imagem, # O método interno deve ser ajustado para anexar modelo antes
+                                        caminho_referencia=primeira_imagem,
                                         prompt=prompt_a,
                                         caminho_saida=cand_a,
                                         caminho_modelo=cam_modelo_param 
@@ -617,8 +681,9 @@ def main() -> None:
                                     
                                     # 2. Gera Variante B
                                     log_step(f"Gerando Imagem Base Variante B ({sufixo_rot}) no Flow...")
+                                    anexar_ao_metadados(caminho_prompts_log, f"🎨 PROMPT FLOW: Imagem B — {sufixo_rot}", prompt_b)
                                     flow_bot_img.gerar_imagem_base(
-                                        caminho_referencia=primeira_imagem, # O método interno deve ser ajustado para anexar modelo antes
+                                        caminho_referencia=primeira_imagem,
                                         prompt=prompt_b,
                                         caminho_saida=cand_b,
                                         caminho_modelo=cam_modelo_param
@@ -630,8 +695,8 @@ def main() -> None:
                                         driver, 
                                         url_gemini=url_gem, 
                                         timeout=60,
-                                        driver_acessibilidade=None,         
-                                        url_gemini_acessibilidade=None  
+                                        driver_acessibilidade=driver_medico,         
+                                        url_gemini_acessibilidade=url_gem_medico if driver_medico else None  
                                     )
                                     gemini_juri.abrir_gemini()
                                     
@@ -680,9 +745,17 @@ def main() -> None:
                         precisa_gerar_roteiro = True
                         texto_roteiro_atual = ""
                         
+                        # Tenta ler de roteiros.txt, fallback para metadados.txt (legado)
+                        _arquivo_roteiro_fonte = None
                         if caminho_roteiros_unificado.exists():
-                            conteudo_total = caminho_roteiros_unificado.read_text(encoding='utf-8')
-                            marcador_roteiro = f"=== ROTEIRO {r_idx} ==="
+                            _arquivo_roteiro_fonte = caminho_roteiros_unificado
+                        elif caminho_metadados.exists() and f"=== ROTEIRO {r_idx}_VARIANTE_1 ===" in caminho_metadados.read_text(encoding='utf-8'):
+                            _arquivo_roteiro_fonte = caminho_metadados  # legado
+                        
+                        if _arquivo_roteiro_fonte:
+                            conteudo_total = _arquivo_roteiro_fonte.read_text(encoding='utf-8')
+                            # O arquivo salva como "ROTEIRO {r_idx}_VARIANTE_1", não "ROTEIRO {r_idx}"
+                            marcador_roteiro = f"=== ROTEIRO {r_idx}_VARIANTE_1 ==="
                             
                             if marcador_roteiro in conteudo_total:
                                 bloco = conteudo_total.split(marcador_roteiro)[1]
@@ -691,9 +764,19 @@ def main() -> None:
                                 if len(bloco.strip()) < 500 or not re.search(r'\[[Cc]ena\s*1', bloco):
                                     log_error(f'⚠️ Roteiro {r_idx} pequeno ou sem cenas válidas no arquivo unificado. Regerando...')
                                 else:
-                                    log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Roteiro {r_idx} já existe em roteiros.txt.')
+                                    log_success(f'🚀 CHECKPOINT ROTEIRO ALCANÇADO: Roteiro {r_idx} já existe em {_arquivo_roteiro_fonte.name}.')
                                     precisa_gerar_roteiro = False
                                     texto_roteiro_atual = bloco.strip()
+                                    
+                                    # Seta variáveis que o Flow precisa para não crashar
+                                    roteiro_1_limpo = bloco.strip()
+                                    marcador_v2 = f"=== ROTEIRO {r_idx}_VARIANTE_2 ==="
+                                    if marcador_v2 in conteudo_total:
+                                        bloco_v2 = conteudo_total.split(marcador_v2)[1]
+                                        bloco_v2 = bloco_v2.split("\n===")[0] if "\n===" in bloco_v2 else bloco_v2
+                                        roteiro_2_limpo = bloco_v2.strip()
+                                    else:
+                                        roteiro_2_limpo = roteiro_1_limpo
 
                         if precisa_gerar_roteiro:
                             log_step(f'ETAPA IA: Gerando roteiros para {sufixo_rot} ({r_idx}/{qtd_roteiros})...')
@@ -753,11 +836,12 @@ def main() -> None:
                                     raise Exception(f"SWITCH_ACCOUNT: Falha anexo roteiro na conta {account.email}")
                                 raise e
 
-                            # 🚨 SALVA AS VARIANTES NO ARQUIVO UNIFICADO PARA REGISTRO
+                            # 🚨 SALVA EM ARQUIVOS SEPARADOS
+                            anexar_ao_metadados(caminho_prompts_log, f"💬 RESPOSTA: Roteiro IA — {sufixo_rot}", roteiro_bruto)
                             salvar_bloco_unificado(caminho_roteiros_unificado, f"ROTEIRO {r_idx}_VARIANTE_1", roteiro_1_limpo)
                             salvar_bloco_unificado(caminho_roteiros_unificado, f"ROTEIRO {r_idx}_VARIANTE_2", roteiro_2_limpo)
                             
-                            log_success(f'Roteiro {r_idx} (Variantes 1 e 2) gerado e salvo no roteiros.txt')
+                            log_success(f'Roteiro {r_idx} (Variantes 1 e 2) gerado e salvo em roteiros.txt')
                             salvar_ultima_conta_env(account.email)
 
                         # Adiciona ao contexto global para o próximo loop (próxima foto de produto) não repetir ideias
@@ -778,6 +862,28 @@ def main() -> None:
                             # Manda ler o sufixo exato (ex: VARIANTE_1) que já foi salvo lá em cima!
                             sufixo_variante = f"VARIANTE_{v_idx}" 
                             cenas = ler_e_separar_cenas(caminho_roteiros_unificado, num_roteiro=r_idx, qtd_cenas=qtd_cenas_anuncio, variante=sufixo_variante)
+                            
+                            # 🛡️ Limpeza de marcadores vazados nas cenas extraídas
+                            if cenas:
+                                cenas = [re.sub(r'===\s*VARIANTE\s*\d+\s*===', '', c).strip() for c in cenas]
+                                cenas = [re.sub(r'===\s*ROTEIRO\s*\d+[^=]*===', '', c).strip() for c in cenas]
+                                cenas = [c for c in cenas if len(c) > 10]  # Remove cenas que ficaram vazias após limpeza
+                            
+                            # 🛡️ Validação de qualidade do voiceover (detecta texto grudado do Gemini)
+                            if cenas:
+                                for _ci, _cena_txt in enumerate(cenas):
+                                    # Extrai o texto entre aspas do voiceover
+                                    _match_vo = re.search(r':\s*"([^"]{30,})"', _cena_txt)
+                                    if _match_vo:
+                                        _vo_text = _match_vo.group(1)
+                                        _palavras = _vo_text.split()
+                                        # Se alguma "palavra" tem > 40 chars, o texto está grudado
+                                        _palavras_grudadas = [p for p in _palavras if len(p) > 40]
+                                        if _palavras_grudadas:
+                                            log_error(f"🚨 GUARD VOICEOVER: Cena {_ci+1} tem texto GRUDADO: '{_palavras_grudadas[0][:50]}...'")
+                                            log_error(f"🚨 Deletando roteiro corrompido e forçando regeneração...")
+                                            caminho_roteiros_unificado.unlink(missing_ok=True)
+                                            raise Exception(f"Voiceover da Cena {_ci+1} corrompido pelo Gemini (texto sem espaços). Regerando roteiro.")
                             
                             # Fallback dinâmico caso a sua função nativa de cenas falhe
                             if not cenas:
@@ -810,14 +916,15 @@ def main() -> None:
                             flow_bot = GoogleFlowAutomation(
                                 driver, 
                                 url_flow=url_flw,
-                                driver_acessibilidade=None,
-                                url_gemini_acessibilidade=None
+                                driver_acessibilidade=driver_medico,
+                                url_gemini_acessibilidade=url_gem_medico if driver_medico else None
                             )
                             flow_bot.acessar_flow()
                             videos_cenas_parciais = []
                             
                             for c_idx, prompt_cena in enumerate(cenas, start=1):
                                 log_step(f"🎬 [DEBUG] Roteiro: {sufixo_rot} | Variante {v_idx} | Cena {c_idx} | Texto: {prompt_cena[:50]}...")
+                                anexar_ao_metadados(caminho_prompts_log, f"🎬 PROMPT FLOW: Vídeo {sufixo_rot} V{v_idx} Cena {c_idx}", prompt_cena)
                                 
                                 # --- CHECKPOINT DE CENA PARCIAL ---
                                 # Verifica se esta cena já foi gerada com sucesso em alguma tentativa anterior
@@ -836,15 +943,56 @@ def main() -> None:
                                 for tentativa_projeto in range(1, 4):
                                     try:
                                         flow_bot.clicar_novo_projeto()
-                                        flow_bot.configurar_parametros_video()
+                                        if not flow_bot.configurar_parametros_video():
+                                            flow_bot._modelo_configurado = False
+                                            raise Exception("Configuração de vídeo falhou — modelo ainda em modo imagem")
                                         
                                         if imagem_base_flow:
                                             flow_bot.anexar_imagem(imagem_base_flow)
                                         
-                                        sucesso_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
-        
-                                        if sucesso_geracao:
+                                        resultado_geracao = flow_bot.enviar_prompt_e_aguardar(prompt_cena, timeout_geracao=300)
+    
+                                        if resultado_geracao == True:
+                                            sucesso_geracao = True
                                             break
+                                        elif resultado_geracao == "POLICY_VIOLATION":
+                                            # 🧠 REESCRITA INTELIGENTE via Gemini médico
+                                            log_error(f"🚨 POLICY na Cena {c_idx}! Chamando Gemini para reescrever...")
+                                            try:
+                                                _drv = driver_medico if driver_medico else driver
+                                                _url = url_gem_medico if driver_medico else url_gem
+                                                
+                                                gem_rw = GeminiAnunciosViaFlow(_drv, url_gemini=_url, timeout=120)
+                                                gem_rw.abrir_gemini()
+                                                gem_rw.abrir_novo_chat_limpo()
+                                                
+                                                _pedido = (
+                                                    "O prompt abaixo foi BLOQUEADO pelo Google Flow por 'violação de política contra conteúdo sexual'. "
+                                                    "Reescreva o prompt INTEIRO mantendo a MESMA intenção criativa, mesma estrutura, mesma duração, "
+                                                    "mesma fala em português (voiceover), mas substituindo termos que possam ser interpretados como sexuais. "
+                                                    "Responda APENAS com o prompt reescrito, sem explicações.\n\n"
+                                                    f"PROMPT BLOQUEADO:\n{prompt_cena}"
+                                                )
+                                                
+                                                resp_rw = gem_rw.enviar_prompt(_pedido, timeout=120, aguardar_resposta=True)
+                                                
+                                                if resp_rw and resp_rw not in ['RECOVERY_TRIGGERED', 'TIMEOUT', 'SEM_RESPOSTA_UTIL', 'ERRO_F5']:
+                                                    novo_prompt = resp_rw.replace("```", "").strip()
+                                                    if 100 < len(novo_prompt) < 3000:
+                                                        log_success(f"✅ Prompt reescrito ({len(novo_prompt)} chars). Retentando...")
+                                                        prompt_cena = novo_prompt
+                                                        anexar_ao_metadados(caminho_prompts_log, f"🔄 REWRITE POLICY: Cena {c_idx}", prompt_cena)
+                                                    else:
+                                                        log_error(f"⚠️ Rewrite inválido ({len(novo_prompt)} chars)")
+                                                else:
+                                                    log_error("⚠️ Gemini não respondeu para rewrite")
+                                            except Exception as e_rw:
+                                                log_error(f"⚠️ Erro rewrite Gemini: {e_rw}")
+                                            
+                                            # Retenta no MESMO Flow (sem refresh, sem trocar conta)
+                                            flow_bot._projeto_criado = False
+                                            flow_bot._modelo_configurado = False
+                                            flow_bot._imagem_upada = False
                                         else:
                                             log_error(f"⚠️ Tentativa {tentativa_projeto} de 3 falhou no Flow. Tentando novo projeto...")
                                             driver.refresh()
@@ -892,11 +1040,22 @@ def main() -> None:
                     # =========================================================================
                     # 🚀 ENTREGA FINAL: MOVE TUDO PARA A PASTA DE ANUNCIOS E LIMPA A ORIGEM
                     # =========================================================================
+                    
+                    # 📋 Consolida os 4 arquivos em um único metadados.txt organizado
+                    try:
+                        from integrations.utils import consolidar_metadados_final
+                        consolidar_metadados_final(Path(prepared.task.folder_path))
+                    except Exception as e_cons:
+                        log_error(f"⚠️ Erro ao consolidar metadados (não-fatal): {e_cons}")
+                    
                     log_step(f"🏆 Concluído! Movendo todos os arquivos gerados para: {pasta_entrega.name}")
                     pasta_entrega.mkdir(parents=True, exist_ok=True)
                     
+                    # Arquivos de trabalho que já foram consolidados no metadados.txt
+                    _arquivos_trabalho = {"roteiros.txt", "legendas.txt", "prompts.txt"}
+                    
                     for item_final in Path(prepared.task.folder_path).iterdir():
-                        if item_final.is_file():
+                        if item_final.is_file() and item_final.name not in _arquivos_trabalho:
                             shutil.copy2(str(item_final), str(pasta_entrega / item_final.name))
                             item_final.unlink(missing_ok=True)
                     
@@ -906,10 +1065,27 @@ def main() -> None:
                     sucesso_absoluto_tarefa = True
 
                 except Exception as exc:
+                    erro_str = str(exc).lower()
                     log_error(f"Falha na execução: {str(exc)}")
                     log_step("Encerrando driver e limpando rastros...")
                     
-                    # 🚨 CONTROLE DE RETENTATIVAS
+                    # 🌐 DETECÇÃO DE QUEDA DE INTERNET: Não penaliza a conta!
+                    termos_rede = ['connectionerror', 'connection refused', 'unreachable', 
+                                   'errno 11001', 'getaddrinfo', 'remotedisconnected',
+                                   'connectionreset', 'no internet', 'nslookup',
+                                   'newconnectionerror', 'maxretryerror', 'nodename nor servname']
+                    eh_erro_rede = any(t in erro_str for t in termos_rede)
+                    
+                    # Double-check: só trata como rede se a internet REALMENTE caiu
+                    if eh_erro_rede or not verificar_internet():
+                        if not verificar_internet():
+                            log_step("🌐 Erro de rede detectado. Aguardando internet restabelecer...")
+                            aguardar_internet()
+                            log_step("🌐 Internet OK. Retentando a mesma conta SEM penalizar...")
+                            # NÃO incrementa falhas_consecutivas — a conta não falhou, a internet falhou
+                            continue
+                    
+                    # 🚨 CONTROLE DE RETENTATIVAS (só para erros reais)
                     falhas_consecutivas += 1
                     
                     # Se o erro for SWITCH_ACCOUNT (ex: anexo falhou), pula pra próxima conta
@@ -919,6 +1095,13 @@ def main() -> None:
                         contas_esgotadas += 1
 
                 finally:
+                    # 🏥 Fecha a Unidade Médica primeiro (se estiver ativa)
+                    if driver_medico:
+                        try:
+                            close_driver(driver_medico)
+                        except: pass
+                        driver_medico = None
+                    
                     if driver:
                         log_step("Encerrando navegador e limpando rastro de sessão...")
                         close_driver(driver)

@@ -14,7 +14,7 @@ import pyperclip
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from integrations.utils import _log as log_base, salvar_print_debug, js_click, scroll_ao_fim, salvar_ultimo_prompt, remover_caracteres_nao_bmp
-from integrations.self_healing import cacar_elemento_universal, elemento_esta_realmente_pronto
+from integrations.self_healing import cacar_elemento_universal, elemento_esta_realmente_pronto, clicar_com_hunter, interagir_com_menu_complexo, limpar_memoria_chave, superar_obstaculo_desconhecido, detectar_com_hunter
 
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
@@ -131,6 +131,26 @@ class GoogleFlowAutomation:
                     time.sleep(0.5)
         except Exception:
             pass
+        
+        # 🧠 FALLBACK INTELIGENTE: Só pede ajuda à IA se REALMENTE tem um overlay/dialog VISÍVEL
+        if not fechou_algo:
+            try:
+                overlays_reais = self.driver.find_elements(By.XPATH, 
+                    "//div[contains(@class,'overlay') or @role='dialog'] | //mat-dialog-container | //div[contains(@class,'modal')]"
+                )
+                tem_bloqueio_real = any(o.is_displayed() for o in overlays_reais)
+            except:
+                tem_bloqueio_real = False
+            
+            if tem_bloqueio_real:
+                try:
+                    superar_obstaculo_desconhecido(
+                        driver=self.driver,
+                        driver_acessibilidade=getattr(self, 'driver_acessibilidade', None),
+                        url_gemini=getattr(self, 'url_gemini_acessibilidade', None),
+                        contexto="modal intrusivo ou popup bloqueando a interface do Google Flow"
+                    )
+                except: pass
 
     def acessar_flow(self) -> None:
         _log(f'Acessando a ferramenta Flow: {self.url_flow}')
@@ -194,48 +214,82 @@ class GoogleFlowAutomation:
             return
 
         _log('Iniciando um novo projeto/limpando a tela...')
+        t0 = time.time()
         self._fechar_modais_intrusivos()
         
-        # --- BLOCO DE FUGA: GARANTE QUE ESTAMOS NA RAIZ ANTES DE CRIAR PROJETO ---
-        _log("Verificando se precisamos sair do projeto atual (Seta Voltar)...")
-        xpath_voltar = "//button[.//i[contains(text(), 'arrow_back')]] | //button[contains(., 'Voltar')]"
-        botoes_voltar = self.driver.find_elements(By.XPATH, xpath_voltar)
-        
-        btn_voltar = next((b for b in botoes_voltar if b.is_displayed()), None)
-        
-        if btn_voltar:
-            _log("Seta encontrada. Saindo do projeto atual e voltando para a galeria...")
-            try:
-                btn_voltar.click()
-            except:
-                self.driver.execute_script("arguments[0].click();", btn_voltar)
-            time.sleep(3) # Aguarda voltar pro painel inicial
-        # -------------------------------------------------------------------------
+        # --- BLOCO DE FUGA: Só sai do projeto se estiver DENTRO de um ---
+        try:
+            btns_voltar = self.driver.find_elements(By.XPATH, 
+                "//button[.//i[contains(text(), 'arrow_back')]] | //button[contains(., 'Voltar')]"
+            )
+            btn_visivel = next((b for b in btns_voltar if b.is_displayed()), None)
+            if btn_visivel:
+                _log("Seta Voltar detectada — saindo do projeto atual...")
+                js_click(self.driver, btn_visivel)
+                time.sleep(2)
+        except:
+            pass
 
         try:
-            self._wait_click(
-                By.XPATH, 
-                "//span[contains(text(), 'New project')] | //button[contains(., 'New')] | //button[contains(., 'Novo projeto')] | //button[descendant::i[text()='add_2']]",
-                timeout=10,
-                descricao="Botão Novo Projeto"
-            )
-            time.sleep(3)
-            self._fechar_modais_intrusivos()
-
-            try:
-                self.wait.until(EC.presence_of_element_located((By.XPATH, "//div[@role='textbox' and @contenteditable='true'] | //textarea")))
-            except Exception:
-                pass
-            self._projeto_criado = True
+            # ⚡ CAMINHO RÁPIDO: Busca direta do botão "Novo Projeto" (< 50ms)
+            clicou = False
+            xpaths_novo = [
+                "//button[descendant::i[text()='add_2']]",
+                "//span[contains(text(), 'New project')]/..",
+                "//button[contains(., 'Novo projeto')]",
+                "//button[contains(., 'New')]",
+            ]
+            for xp in xpaths_novo:
+                try:
+                    btns = self.driver.find_elements(By.XPATH, xp)
+                    for b in btns:
+                        if b.is_displayed():
+                            js_click(self.driver, b)
+                            clicou = True
+                            _log(f"✔ Botão 'Novo Projeto' clicado (direto em {time.time()-t0:.1f}s)")
+                            break
+                except:
+                    pass
+                if clicou:
+                    break
             
-            # Reset de estado de imagem toda vez que um NOVO projeto nasce de fato
+            # 🧠 FALLBACK: Hunter (sem Médico — botão simples, não precisa de IA)
+            if not clicou:
+                if not clicar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="flow_btn_novo_projeto",
+                    descricao_para_ia="Botão de criar novo projeto (New project ou ícone add_2) no Google Flow",
+                    seletores_rapidos=xpaths_novo,
+                    palavras_semanticas=["new project", "novo projeto", "add_2"],
+                    etapa="FLOW_NAVEGACAO",
+                    permitir_autocura=False,  # ⚡ Sem Médico (era True, desperdiçava ~30s)
+                    timeout_busca=5.0,
+                ):
+                    raise TimeoutException("Botão Novo Projeto não encontrado")
+            
+            # ⚡ POLL: Espera o textbox aparecer (em vez de sleep(3) cego)
+            deadline_tb = time.time() + 5.0
+            while time.time() < deadline_tb:
+                try:
+                    tb = self.driver.find_elements(By.XPATH, 
+                        "//div[@role='textbox' and @contenteditable='true'] | //textarea"
+                    )
+                    if tb and any(t.is_displayed() for t in tb):
+                        break
+                except:
+                    pass
+                time.sleep(0.3)
+            
+            self._fechar_modais_intrusivos()
+            self._projeto_criado = True
             self._modelo_base_upada = False
             self._uploads_apos_modelo = 0
+            _log(f"✔ Novo projeto pronto em {time.time()-t0:.1f}s")
 
         except TimeoutException:
-            _log('Botão "Novo projeto" não visível, forçando refresh para limpar estado...')
+            _log('Botão "Novo projeto" não visível, forçando refresh...')
             self.driver.refresh()
-            time.sleep(4)
+            time.sleep(3)
             self._fechar_modais_intrusivos()
             self._projeto_criado = True
             self._modelo_base_upada = False
@@ -252,6 +306,9 @@ class GoogleFlowAutomation:
         try:
             salvar_print_debug(self.driver,"CONFIG_PARAM_INICIO")
             
+            # =====================================================================
+            # PASSO 1: ABRIR O CHIP DO MODELO (_wait_click primário, Hunter fallback)
+            # =====================================================================
             chip_encontrado = False
             xpath_chip_video = "//button[@aria-haspopup='menu' and (contains(., 'Veo') or contains(., 'Vídeo') or contains(., 'Video'))]"
             xpath_chip_img = "//button[@aria-haspopup='menu' and (contains(., 'Banana') or contains(., 'Nano'))]"
@@ -264,15 +321,37 @@ class GoogleFlowAutomation:
                     self._wait_click(By.XPATH, xpath_chip_img, timeout=5, descricao="chip do Modelo (Imagem)")
                     chip_encontrado = True
                 except TimeoutException:
-                    _log("Aviso: Nenhum chip de modelo encontrado. Tentando genérico...")
-                    botoes_menu = self.driver.find_elements(By.XPATH, "//button[@aria-haspopup='menu']")
-                    if botoes_menu:
-                        js_click(self.driver, botoes_menu[0])
-                        chip_encontrado = True
+                    _log("⚠️ _wait_click falhou. Tentando fallback Hunter...")
+                    chip_encontrado = clicar_com_hunter(
+                        driver=self.driver,
+                        chave_memoria="flow_chip_modelo_video",
+                        descricao_para_ia="Chip/botão do modelo de vídeo (Veo, Video) com aria-haspopup=menu no Google Flow",
+                        seletores_rapidos=[
+                            "//button[@aria-haspopup='menu' and (contains(., 'Veo') or contains(., 'Vídeo') or contains(., 'Video'))]",
+                            "//button[@aria-haspopup='menu' and (contains(., 'Banana') or contains(., 'Nano'))]",
+                            "//button[@aria-haspopup='menu']",
+                        ],
+                        palavras_semanticas=["veo", "video", "model", "banana", "nano"],
+                        etapa="FLOW_CONFIG_VIDEO",
+                        permitir_autocura=True,
+                        driver_acessibilidade=self.driver_acessibilidade,
+                        url_gemini=self.url_gemini_acessibilidade,
+                        timeout_busca=8.0,
+                    )
+                    if not chip_encontrado:
+                        # Último fallback genérico
+                        botoes_menu = self.driver.find_elements(By.XPATH, "//button[@aria-haspopup='menu']")
+                        if botoes_menu:
+                            js_click(self.driver, botoes_menu[0])
+                            chip_encontrado = True
 
             if chip_encontrado:
                 time.sleep(2.0) 
 
+                # =============================================================
+                # PASSO 2: NAVEGAR O MENU DROPDOWN (_wait_click primário)
+                # =============================================================
+                # Aba Vídeo
                 try:
                     self._wait_click(
                         By.XPATH, 
@@ -283,6 +362,7 @@ class GoogleFlowAutomation:
                     time.sleep(0.5)
                 except TimeoutException: pass
 
+                # 9:16
                 try:
                     self._wait_click(
                         By.XPATH, 
@@ -293,6 +373,7 @@ class GoogleFlowAutomation:
                     time.sleep(0.5)
                 except TimeoutException: pass
 
+                # x1
                 try:
                     self._wait_click(
                         By.XPATH, 
@@ -303,6 +384,7 @@ class GoogleFlowAutomation:
                     time.sleep(0.5)
                 except TimeoutException: pass
 
+                # Submenu Veo > Veo 3.1 Fast
                 try:
                     self._wait_click(
                         By.XPATH,
@@ -324,7 +406,66 @@ class GoogleFlowAutomation:
                 ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
                 time.sleep(0.5)
                 ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
-                _log('Configurações do modelo aplicadas com sucesso.')
+
+                # =============================================================
+                # PASSO 3: VALIDAÇÃO REAL — o chip mudou para Veo?
+                # =============================================================
+                time.sleep(0.5)
+                try:
+                    chips = self.driver.find_elements(By.XPATH, "//button[@aria-haspopup='menu']")
+                    modelo_atual = ""
+                    for c in chips:
+                        txt = (c.text or "").strip()
+                        if any(k in txt.lower() for k in ["veo", "banana", "nano", "video"]):
+                            modelo_atual = txt
+                            break
+                    
+                    if "veo" in modelo_atual.lower():
+                        _log(f'✔ Configurações do modelo aplicadas com sucesso: {modelo_atual}')
+                    elif "banana" in modelo_atual.lower() or "nano" in modelo_atual.lower():
+                        _log(f"⚠️ Modelo ainda é '{modelo_atual}'. Acionando Médico (self-healing)...")
+                        salvar_print_debug(self.driver, "CONFIG_VIDEO_ANTES_SELFHEALING")
+                        
+                        # 🏥 SELF-HEALING: Pede à IA para navegar o menu e selecionar Veo 3.1
+                        resolveu = superar_obstaculo_desconhecido(
+                            driver=self.driver,
+                            driver_acessibilidade=self.driver_acessibilidade,
+                            url_gemini=self.url_gemini_acessibilidade,
+                            contexto=(
+                                "No Google Flow, o modelo de geração está configurado como 'Nano Banana 2' (modo imagem). "
+                                "Preciso mudar para modo VÍDEO. O botão do modelo está na barra inferior da tela. "
+                                "Clique nele para abrir o menu dropdown, depois selecione a aba 'Vídeo', "
+                                "escolha proporção 9:16, quantidade x1, e modelo 'Veo 3.1 - Fast [Lower Priority]'. "
+                                "Depois feche o menu com ESC."
+                            )
+                        )
+                        
+                        if resolveu:
+                            # Re-valida após self-healing
+                            time.sleep(1.0)
+                            try:
+                                chips2 = self.driver.find_elements(By.XPATH, "//button[@aria-haspopup='menu']")
+                                for c2 in chips2:
+                                    txt2 = (c2.text or "").strip()
+                                    if "veo" in txt2.lower():
+                                        _log(f'✔ Médico resolveu! Modelo agora: {txt2}')
+                                        break
+                                else:
+                                    _log("🚨 Médico tentou mas modelo não mudou. Configuração FALHOU!")
+                                    self._modelo_configurado = False
+                                    return False
+                            except Exception:
+                                _log("⚠️ Não foi possível re-validar após self-healing.")
+                        else:
+                            _log("🚨 Médico não conseguiu resolver. Configuração de vídeo FALHOU!")
+                            salvar_print_debug(self.driver, "CONFIG_VIDEO_FALHOU_MODELO_ERRADO")
+                            self._modelo_configurado = False
+                            return False
+                    else:
+                        _log(f'Configurações aplicadas (modelo: {modelo_atual or "não identificado"}).')
+                except Exception:
+                    _log('Configurações do modelo aplicadas com sucesso.')
+
             else:
                 _log("⚠️ Não foi possível abrir o menu. Assumindo que a UI já está configurada por reuso de projeto.")
 
@@ -343,7 +484,9 @@ class GoogleFlowAutomation:
         _log('Configurando parâmetros de Imagem (Nano Banana > 9:16)...')
         try:
             salvar_print_debug(self.driver,"CONFIG_PARAM_IMG_INICIO")
+            url_antes = self.driver.current_url
             
+            # PASSO 1: Clica no chip do modelo (Nano Banana) — _wait_click ESPERA ele ficar clicável
             chip_xpath = "//button[(contains(., 'Banana') or contains(., 'Nano')) and @aria-haspopup='menu']"
             try:
                 self._wait_click(By.XPATH, chip_xpath, timeout=10, descricao="chip do Modelo")
@@ -353,16 +496,37 @@ class GoogleFlowAutomation:
                 if botoes_menu: 
                     js_click(self.driver, botoes_menu[0])
             
+            salvar_print_debug(self.driver,"CONFIG_PARAM_IMG_APOS_CHIP_CLICK")
             time.sleep(2.0) 
 
-            self._wait_click(
-                By.XPATH, 
-                "//div[@role='menu' and @data-state='open']//button[.//i[text()='crop_9_16'] or contains(., '9:16')]", 
-                timeout=10, 
-                descricao="Opção 9:16"
-            )
+            # PASSO 2: Seleciona 9:16 — _wait_click ESPERA o menu abrir e o botão ficar clicável
+            xpath_916 = "//div[@role='menu' and @data-state='open']//button[.//i[text()='crop_9_16'] or contains(., '9:16')]"
+            try:
+                self._wait_click(By.XPATH, xpath_916, timeout=10, descricao="Opção 9:16")
+                _log("✔ Proporção 9:16 selecionada!")
+                salvar_print_debug(self.driver,"CONFIG_PARAM_IMG_916_OK")
+            except TimeoutException:
+                _log("⚠️ _wait_click falhou para 9:16. Tentando Hunter + Médico...")
+                salvar_print_debug(self.driver,"CONFIG_PARAM_IMG_916_WAIT_FALHOU")
+                # FALLBACK: Hunter com Médico (aprende o seletor correto)
+                clicar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="flow_menu_ratio_916_img",
+                    descricao_para_ia="Opção de proporção 9:16 (vertical) no menu dropdown aberto de configuração do Flow. Ícone crop_9_16 ou texto 9:16.",
+                    seletores_rapidos=[
+                        "//button[.//i[text()='crop_9_16'] or contains(., '9:16')]",
+                        "//button[.//span[contains(text(),'9:16')]]",
+                    ],
+                    palavras_semanticas=["9:16", "crop_9_16", "vertical", "portrait"],
+                    etapa="FLOW_CONFIG_IMG",
+                    timeout_busca=5.0,
+                    permitir_autocura=True,
+                    driver_acessibilidade=self.driver_acessibilidade,
+                    url_gemini=self.url_gemini_acessibilidade,
+                )
             time.sleep(0.5)
 
+            # PASSO 3: Quantidade x1 (opcional)
             try:
                 self._wait_click(
                     By.XPATH, 
@@ -381,6 +545,14 @@ class GoogleFlowAutomation:
             ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
             time.sleep(0.5)
             
+            # VERIFICAÇÃO: Ainda estamos no edit view?
+            url_depois = self.driver.current_url
+            if '/edit/' not in url_depois and '/edit/' in url_antes:
+                _log("🚨 ALERTA: ESC fechou o edit view! Voltando...")
+                self.driver.get(url_antes)
+                time.sleep(3)
+                return False
+            
             return True
 
         except Exception as e:
@@ -388,12 +560,25 @@ class GoogleFlowAutomation:
             return False
 
     def _encontrar_input_file(self) -> WebElement:
+        # 🛡️ HUNTER: Busca input file via cache
+        el = cacar_elemento_universal(
+            driver=self.driver,
+            chave_memoria="flow_input_file",
+            descricao_para_ia="Campo input[type=file] para upload de imagens no Google Flow",
+            seletores_rapidos=['input[type="file"]', 'input[accept*="image"]'],
+            palavras_semanticas=[],
+            permitir_autocura=False,
+            etapa="FLOW_UPLOAD",
+        )
+        if el is not None:
+            return el
+        
+        # Fallback direto
         seletores = ['input[type="file"]', 'input[accept*="image"]']
         for seletor in seletores:
             elementos = self.driver.find_elements(By.CSS_SELECTOR, seletor)
             if elementos:
-                # Pega SEMPRE o último input criado no DOM para não injetar em inputs fantasmas de modais antigos
-                return elementos[-1] 
+                return elementos[-1]
         raise TimeoutException('Nenhum input[type=file] encontrado na interface do Flow.')
 
     # =================================================================================
@@ -426,12 +611,21 @@ class GoogleFlowAutomation:
             fim_loader = time.time() + 90 # 1.5 minutos de margem
             while time.time() < fim_loader:
                 try:
-                    # Captura bolinhas girando, progressbars e o maldito texto de 99%
-                    xpath_loaders = "//*[contains(@class, 'spin') or @role='progressbar'] | //*[contains(text(), '%')]"
-                    loaders = self.driver.find_elements(By.XPATH, xpath_loaders)
+                    # 🛡️ HUNTER: Detecta spinners, progressbars e textos de %
+                    loaders = detectar_com_hunter(
+                        driver=self.driver,
+                        chave_memoria="flow_upload_loaders",
+                        descricao_para_ia="Indicadores de loading (spinners, progressbar, texto com %) durante upload no Google Flow",
+                        seletores_rapidos=[
+                            "//*[contains(@class, 'spin') or @role='progressbar']",
+                            "//*[contains(text(), '%')]",
+                        ],
+                        palavras_semanticas=["loading", "uploading", "progress", "spin"],
+                        etapa="FLOW_UPLOAD",
+                    )
                     
                     # Se não tem nada de loading e nada de % na tela, o upload acabou!
-                    if not loaders or not any(l.is_displayed() for l in loaders):
+                    if not loaders:
                         break
                 except: pass
                 time.sleep(1)
@@ -441,9 +635,21 @@ class GoogleFlowAutomation:
 
             # Checa se o Google cuspiu erro fatal de upload
             try:
-                xpath_erros = "//*[@data-tile-id]//div[contains(text(), 'Falha') or contains(text(), 'Failed')]"
-                erros = self.driver.find_elements(By.XPATH, xpath_erros)
-                if erros and any(e.is_displayed() for e in erros):
+                # 🛡️ HUNTER: Detecta erros de upload (SEM busca semântica para evitar falso-positivo do rodapé)
+                erros = detectar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="flow_upload_erros",
+                    descricao_para_ia="Mensagem de erro/falha no card de upload (Falha, Failed, Error, Violação) no Google Flow",
+                    seletores_rapidos=[
+                        "//*[@data-tile-id]//div[contains(text(), 'Falha') or contains(text(), 'Failed')]",
+                        "//*[@data-tile-id]//*[contains(text(), 'Error') or contains(text(), 'Erro')]",
+                        "//*[@data-tile-id]//*[contains(text(), 'Viola') or contains(text(), 'Violat')]",
+                        "//*[@data-tile-id]//*[contains(@class, 'error') or contains(@class, 'fail')]",
+                    ],
+                    palavras_semanticas=[],  # 🛡️ DESATIVADO: O rodapé "O Flow pode cometer erros" causava falso-positivo
+                    etapa="FLOW_UPLOAD",
+                )
+                if erros:
                     _log("❌ Falha crítica: O Google Flow rejeitou a imagem no servidor.")
                     salvar_print_debug(self.driver, f"3_ERRO_SERVIDOR_UPLOAD_{nome_limpo}")
                     return False
@@ -645,7 +851,15 @@ class GoogleFlowAutomation:
 
         _log("Enviando prompt (Fluxo isolado de Imagem)...")
 
-        prompt_linear = " ".join(prompt.replace('\n', ' ').replace('\r', ' ').split())
+        prompt_linear = remover_caracteres_nao_bmp(" ".join(prompt.replace('\n', ' ').replace('\r', ' ').split()))
+        
+        # 🛡️ CAMADA 3: Guard de tamanho antes do send_keys
+        # Um prompt de imagem do Flow tem ~300-800 chars. Se tem >2000, está corrompido.
+        MAX_PROMPT_FLOW = 2000
+        if len(prompt_linear) > MAX_PROMPT_FLOW:
+            _log(f"🚨 GUARD FLOW: Prompt com {len(prompt_linear)} chars (max {MAX_PROMPT_FLOW}). Prompt corrompido — ABORTANDO envio!")
+            _log(f"🚨 Primeiros 200 chars: {prompt_linear[:200]}...")
+            return False
         
         try:
             from integrations.utils import salvar_ultimo_prompt
@@ -654,8 +868,20 @@ class GoogleFlowAutomation:
 
         try:
             xpath_box = "//div[@role='textbox' and @contenteditable='true'] | //textarea"
-            caixas = self.driver.find_elements(By.XPATH, xpath_box)
-            box = next((c for c in caixas if c.is_displayed()), None)
+            # 🛡️ HUNTER: Busca caixa de texto via cache
+            box = cacar_elemento_universal(
+                driver=self.driver,
+                chave_memoria="flow_textarea_prompt_img",
+                descricao_para_ia="Caixa de texto (textbox contenteditable) para digitar prompt de imagem no Google Flow",
+                seletores_rapidos=[xpath_box],
+                palavras_semanticas=[],
+                permitir_autocura=False,
+                etapa="FLOW_SUBMIT_IMG",
+            )
+            
+            if not box:
+                caixas = self.driver.find_elements(By.XPATH, xpath_box)
+                box = next((c for c in caixas if c.is_displayed()), None)
             
             if not box:
                 _log("⚠️ Caixa de texto não encontrada.")
@@ -680,8 +906,13 @@ class GoogleFlowAutomation:
 
             salvar_print_debug(self.driver, "FLOW_DEPOIS_COLAR_PROMPT")                    
 
+            # 📸 PRINT CRÍTICO: Estado da tela ANTES do submit (modelo ainda no chip?)
+            salvar_print_debug(self.driver, "FLOW_ANTES_SUBMIT_ESTADO")
+
             time.sleep(1.5)
 
+            # Tenta clicar o botão de enviar via Hunter
+            # --- SUBMIT: Lógica FUNCIONAL do commit (find_elements direto + disabled check) ---
             xpath_submit = "//button[.//i[contains(text(), 'arrow') or contains(text(), 'send') or contains(text(), 'sparkle')]] | //button[contains(@aria-label, 'Gerar')]"
             btns = self.driver.find_elements(By.XPATH, xpath_submit)
             
@@ -695,6 +926,7 @@ class GoogleFlowAutomation:
             else:
                 box.send_keys(Keys.CONTROL, Keys.ENTER)
 
+            salvar_print_debug(self.driver, "FLOW_APOS_SUBMIT_PROMPT")
             momento_submit = time.time()
             time.sleep(4) 
             
@@ -751,15 +983,16 @@ class GoogleFlowAutomation:
                     
                 if status in ['SUCESSO_BOTAO', 'SUCESSO_FALLBACK']:
                     # Trava contra falso-positivo (imagens muito rápidas)
-                    if (time.time() - momento_submit) < 20:
-                        time.sleep(2)
+                    if (time.time() - momento_submit) < 15:
+                        time.sleep(1.5)
                         continue
                         
                     _log("✔ Geração concluída com sucesso!")
+                    salvar_print_debug(self.driver, "FLOW_GERACAO_CONCLUIDA")
                     return True
                 
                 self._print_progress_inline(f"[FLOW-IA] Gerando... {int(time.time() - momento_submit)}s")
-                time.sleep(4)
+                time.sleep(1.5)  # ⚡ Reduzido de 4s para 1.5s (JS radar é instantâneo)
                 
             _log("❌ Geração interrompida ou Timeout atingido.")
             return False
@@ -883,8 +1116,20 @@ class GoogleFlowAutomation:
                 
                 fim_upload = time.time() + 60
                 while time.time() < fim_upload:
-                    loaders = self.driver.find_elements(By.XPATH, "//div[contains(text(), '%')] | //span[contains(text(), '%')]")
-                    if not loaders or not any(l.is_displayed() for l in loaders):
+                    # 🛡️ HUNTER: Monitora progresso % do upload
+                    loaders = detectar_com_hunter(
+                        driver=self.driver,
+                        chave_memoria="flow_upload_progress_pct",
+                        descricao_para_ia="Texto com porcentagem (%) indicando progresso de upload no Google Flow",
+                        seletores_rapidos=[
+                            "//div[contains(text(), '%')]",
+                            "//span[contains(text(), '%')]",
+                            "//*[contains(@class, 'spin') or @role='progressbar']",
+                        ],
+                        palavras_semanticas=["progress", "upload", "%"],
+                        etapa="FLOW_UPLOAD",
+                    )
+                    if not loaders:
                         break 
                     time.sleep(1)
 
@@ -901,21 +1146,33 @@ class GoogleFlowAutomation:
             _log("Clicando na imagem na tela principal para abrir o modal de prompt...")
             try:
                 xpath_miniatura = f"//img[contains(@alt, '{nome_arquivo}') or contains(@src, 'blob:')] | //div[@data-tile-id]//img"
-                miniaturas = self.driver.find_elements(By.XPATH, xpath_miniatura)
+                # 🛡️ HUNTER: Busca miniaturas
+                miniaturas = detectar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="flow_miniaturas_imagem",
+                    descricao_para_ia="Miniatura de imagem na galeria do Google Flow",
+                    seletores_rapidos=[xpath_miniatura],
+                    palavras_semanticas=["img", "imagem", "blob", "miniatura"],
+                    etapa="FLOW_UPLOAD",
+                )
                 
                 if miniaturas:
-                    imgs_visiveis = [img for img in miniaturas if img.is_displayed()]
-                    if imgs_visiveis:
-                        # Rola para o elemento antes de clicar para evitar que fique fora da tela
-                        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", imgs_visiveis[-1])
-                        js_click(self.driver, imgs_visiveis[-1])
-                        time.sleep(2.0)
-                        _log("✔ Imagem clicada! Modal aberto.")
-                        salvar_print_debug(self.driver, f"FLOW_MODAL_PROMPT_ABERTO_{caminho.stem}")
-                        return True
+                    # Rola para o elemento antes de clicar para evitar que fique fora da tela
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", miniaturas[-1])
+                    js_click(self.driver, miniaturas[-1])
+                    time.sleep(2.0)
+                    _log("✔ Imagem clicada! Modal aberto.")
+                    salvar_print_debug(self.driver, f"FLOW_MODAL_PROMPT_ABERTO_{caminho.stem}")
+                    return True
                     
                 _log("⚠️ Imagem não achada. Clicando no último card genérico...")
-                imgs = self.driver.find_elements(By.XPATH, "//img")
+                imgs = detectar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="flow_imgs_fallback",
+                    descricao_para_ia="Qualquer tag img na página do Google Flow",
+                    seletores_rapidos=["//img"],
+                    etapa="FLOW_UPLOAD",
+                )
                 if imgs:
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", imgs[-1])
                     js_click(self.driver, imgs[-1]) 
@@ -931,24 +1188,36 @@ class GoogleFlowAutomation:
                     "//div[@type='button' and (contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'inicial') "
                     "or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'initial'))]"
                 )
-                botoes_iniciais = self.driver.find_elements(By.XPATH, xpath_btn_inicial)
-                botao_visivel = [b for b in botoes_iniciais if b.is_displayed()]
+                # 🛡️ HUNTER: Busca botões Initial
+                botoes_iniciais = detectar_com_hunter(
+                    driver=self.driver,
+                    chave_memoria="flow_btn_inicial",
+                    descricao_para_ia="Botão 'Inicial' ou 'Initial' para vincular imagem base no Google Flow",
+                    seletores_rapidos=[xpath_btn_inicial],
+                    palavras_semanticas=["inicial", "initial", "imagem base"],
+                    etapa="FLOW_UPLOAD",
+                )
                 
-                if botao_visivel:
-                    # 🚨 PROTEÇÃO ANTI-ERRO: Rola pro botão antes de clicar
-                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_visivel[0])
-                    js_click(self.driver, botao_visivel[0])
+                if botoes_iniciais:
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botoes_iniciais[0])
+                    js_click(self.driver, botoes_iniciais[0])
                     _log('Botão "Inicial" clicado. Aguardando galeria...')
                     time.sleep(2.5) 
 
                     xpath_img_popup = f"//div[@role='dialog']//img[contains(@alt, '{nome_arquivo}') or contains(@src, 'blob:')] | //div[@role='dialog']//img"
-                    imgs_dialog = self.driver.find_elements(By.XPATH, xpath_img_popup)
+                    # 🛡️ HUNTER: Busca imagens no popup/dialog
+                    imgs_dialog = detectar_com_hunter(
+                        driver=self.driver,
+                        chave_memoria="flow_imgs_dialog",
+                        descricao_para_ia="Imagens dentro do popup/dialog de seleção do Google Flow",
+                        seletores_rapidos=[xpath_img_popup],
+                        etapa="FLOW_UPLOAD",
+                    )
                     if imgs_dialog:
                         js_click(self.driver, imgs_dialog[0])
                         _log('✔ Imagem base selecionada no popup. Aguardando UI processar...')
-                        time.sleep(2.5) # Deixa a galeria fechar sozinha e o React atualizar o slot sem marretada de ESC
+                        time.sleep(2.5)
 
-                    # 📸 PRINT DE CONFERÊNCIA: Ver se a miniatura fixou no botão Inicial
                     salvar_print_debug(self.driver, f"FLOW_CONFERENCIA_SLOT_INICIAL_{caminho.stem}")
                     _log('✔ Imagem vinculada e trancada no slot Inicial!')
                 else:
@@ -962,13 +1231,29 @@ class GoogleFlowAutomation:
     def _garantir_imagem_anexada(self, caminho_imagem: Path) -> bool:
         _log("Validando visualmente a presença da imagem no Slot Inicial...")
         try:
-            btn_remover = self.driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Remove')]")
-            if len(btn_remover) > 0:
+            # 🛡️ HUNTER: Verifica botão Remove
+            btn_remover = detectar_com_hunter(
+                driver=self.driver,
+                chave_memoria="flow_btn_remover",
+                descricao_para_ia="Botão 'Remove' para remover imagem anexada no Google Flow",
+                seletores_rapidos=["//button[contains(@aria-label, 'Remove')]"],
+                palavras_semanticas=["remove", "remover", "delete"],
+                etapa="FLOW_UPLOAD",
+            )
+            if btn_remover:
                 _log("✅ Imagem detectada e garantida no projeto.")
                 return True
             
-            botoes_initial = self.driver.find_elements(By.XPATH, "//button[contains(@aria-label, 'Initial image') and .//img]")
-            if len(botoes_initial) > 0:
+            # 🛡️ HUNTER: Verifica botão Initial image com img
+            botoes_initial = detectar_com_hunter(
+                driver=self.driver,
+                chave_memoria="flow_btn_initial_com_img",
+                descricao_para_ia="Botão 'Initial image' contendo uma miniatura de imagem no Google Flow",
+                seletores_rapidos=["//button[contains(@aria-label, 'Initial image') and .//img]"],
+                palavras_semanticas=["initial", "image", "inicial"],
+                etapa="FLOW_UPLOAD",
+            )
+            if botoes_initial:
                 _log("✅ Miniatura de imagem garantida no botão Inicial.")
                 return True
             
@@ -1004,7 +1289,15 @@ class GoogleFlowAutomation:
         def js_click(driver, element):
             driver.execute_script("arguments[0].click();", element)
 
-        prompt_linear = " ".join(prompt.split())
+        prompt_linear = remover_caracteres_nao_bmp(" ".join(prompt.split()))
+        
+        
+        # 🛡️ GUARD: Tamanho máximo antes do send_keys (video prompts ~500-800 chars)
+        MAX_PROMPT_VIDEO = 3000
+        if len(prompt_linear) > MAX_PROMPT_VIDEO:
+            _log(f"🚨 GUARD FLOW VIDEO: Prompt com {len(prompt_linear)} chars (max {MAX_PROMPT_VIDEO}). Prompt corrompido — ABORTANDO envio!")
+            _log(f"🚨 Primeiros 200 chars: {prompt_linear[:200]}...")
+            return False
         
         # Tenta salvar log do prompt se a função existir
         try:
@@ -1025,14 +1318,12 @@ class GoogleFlowAutomation:
                     if not btn_img_chip:
                         _log("⚠️ O Flow removeu a imagem do slot! Revinculando...")
                         try:
-                            # Tenta achar o botão de input 'Inicial' ou 'Initial'
                             xpath_btn_inicial = "//div[@type='button' and (contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'inicial') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'initial'))] | //button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'inicial') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'initial')]"
                             botoes_iniciais = self.driver.find_elements(By.XPATH, xpath_btn_inicial)
                             
                             if botoes_iniciais and botoes_iniciais[0].is_displayed():
                                 js_click(self.driver, botoes_iniciais[0])
                                 time.sleep(2.0)
-                                # Seleciona a primeira imagem da galeria aberta (que deve ser o upload que acabamos de fazer)
                                 imgs_dialog = self.driver.find_elements(By.XPATH, "//div[@role='dialog']//img")
                                 if imgs_dialog:
                                     js_click(self.driver, imgs_dialog[0])
@@ -1255,16 +1546,42 @@ class GoogleFlowAutomation:
                         self._finish_progress_inline()
                         linha_progresso_ativa = False
                     _log(f"Tile ID rastreado: {self.ultimo_tile_id_gerado}")
+                    salvar_print_debug(self.driver, "FLOW_CARD_GERACAO_INICIO")
 
             base_xpath = f"//*[@data-tile-id='{self.ultimo_tile_id_gerado}']"
 
+            # 🛡️ GRACE PERIOD: Não checa erro nos primeiros 20s (estados transitórios)
+            tempo_desde_tile = time.time() - ultimo_movimento
+            
             try:
                 erros = self.driver.find_elements(By.XPATH, f"{base_xpath}//*[contains(text(), 'Falha') or contains(text(), 'Failed') or contains(text(), 'Erro')]")
                 if erros and any(e.is_displayed() for e in erros):
-                    if linha_progresso_ativa: self._finish_progress_inline("[FLOW-IA] Geração falhou.")
-                    _log("❌ Card em estado de erro (Falha) detectado na interface.")
-                    salvar_print_debug(self.driver,"ERRO_NO_CARD")
-                    return False
+                    # Cross-validação: se tem % de progresso visível, NÃO é erro real
+                    txt_card = ""
+                    try:
+                        els = self.driver.find_elements(By.XPATH, base_xpath)
+                        if els:
+                            txt_card = self.driver.execute_script("return arguments[0].textContent;", els[0]) or ""
+                    except: pass
+                    
+                    tem_progresso = bool(re.search(r'[1-9]\d?\s*%', txt_card))
+                    
+                    if tem_progresso:
+                        pass  # Falso positivo: vídeo gerando com %, ignora o "erro"
+                    elif tempo_desde_tile < 20:
+                        pass  # Grace period: muito cedo para declarar erro
+                    else:
+                        if linha_progresso_ativa: self._finish_progress_inline("[FLOW-IA] Geração falhou.")
+                        _log("❌ Card em estado de erro (Falha) detectado na interface.")
+                        salvar_print_debug(self.driver,"ERRO_NO_CARD")
+                        
+                        # 🛡️ Detecta se é POLICY VIOLATION (conteúdo sexual/violação de política)
+                        _termos_policy = ['violar', 'sexual', 'policy', 'políticas', 'política', 'violação']
+                        if any(t in txt_card.lower() for t in _termos_policy):
+                            _log("🚨 POLICY VIOLATION: O prompt foi bloqueado por violação de política do Flow!")
+                            return "POLICY_VIOLATION"
+                        
+                        return False
             except Exception: pass
 
             try:
@@ -1272,6 +1589,7 @@ class GoogleFlowAutomation:
                 if sucesso:
                     if linha_progresso_ativa: self._finish_progress_inline("[FLOW-IA] Gerando... 100% | pronto!")
                     else: _log("✔ Artefato pronto e disponível para download.")
+                    salvar_print_debug(self.driver, "FLOW_CARD_GERACAO_PRONTO")
                     return True
             except Exception: pass
 
@@ -1334,11 +1652,11 @@ class GoogleFlowAutomation:
         try:
             continue_btn = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Continue')]")
             if continue_btn and continue_btn[0].is_displayed():
-                js_click(self.driver,continue_btn[0])
+                js_click(self.driver, continue_btn[0])
                 time.sleep(1.5)
                 allow_btn = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Allow')]")
                 if allow_btn and allow_btn[0].is_displayed():
-                    js_click(self.driver,allow_btn[0])
+                    js_click(self.driver, allow_btn[0])
                     time.sleep(1.5)
         except Exception: pass
 
@@ -1415,32 +1733,19 @@ class GoogleFlowAutomation:
             salvar_print_debug(self.driver, f"FLOW_PLAYER_VIDEO_{caminho_destino.stem}")
             
             # =========================================================
-            # --- 🛡️ BUSCA DO BOTÃO BAIXAR (Versão HUNTER INTELIGENTE) ---
+            # --- BUSCA DO BOTÃO BAIXAR (XPath direto, sem cache) ---
             # =========================================================
-            _log("Procurando botão 'Baixar' (Hunter mode)...")
+            _log("Procurando botão 'Baixar'...")
+            xpath_download = "//button[.//i[text()='download']]"
 
             btn_baixar = None
-            fim_busca = time.time() + 30
-            while time.time() < fim_busca:
-                btn_baixar = cacar_elemento_universal(
-                    driver=self.driver,
-                    chave_memoria="flow_botao_baixar",
-                    descricao_para_ia="Botão de Download ou Baixar imagem na interface do Google Flow",
-                    seletores_rapidos=[
-                        "//button[.//i[text()='download']]",
-                        "//button[contains(@aria-label, 'Download')]"
-                    ],
-                    palavras_semanticas=['download', 'baixar', 'save_alt'],
-                    driver_acessibilidade=self.driver_acessibilidade, 
-                    url_gemini=self.url_gemini_acessibilidade,
-                    etapa="FLOW_VIDEO_PLAYER" # <--- ADICIONADO PARA ISOLAR O PLAYER
+            try:
+                btn_baixar = WebDriverWait(self.driver, 30).until(
+                    EC.element_to_be_clickable((By.XPATH, xpath_download))
                 )
-                if btn_baixar:
-                    break
-                time.sleep(1)
-
-            if not btn_baixar:
+            except TimeoutException:
                 _log("ERRO: Botão Baixar não habilitou a tempo na tela do player.")
+                salvar_print_debug(self.driver, f"FLOW_SEM_BTN_BAIXAR_{caminho_destino.stem}")
                 return False
 
             try:
@@ -1450,6 +1755,7 @@ class GoogleFlowAutomation:
             # =========================================================
 
             time.sleep(1.5) 
+            salvar_print_debug(self.driver, f"FLOW_APOS_CLICK_BAIXAR_{caminho_destino.stem}")
             
             _log("Selecionando resolução 720p...")
             xpath_720p = "//button[@role='menuitem'][.//span[contains(.,'720p')]]"
@@ -1510,6 +1816,7 @@ class GoogleFlowAutomation:
     def _baixar_imagem(self, caminho_destino: Path) -> Path:
         """Versão Blindada Radix UI: Força o download 1K usando os seletores reais do menu flutuante."""
         _log(f'Iniciando download da imagem para: {caminho_destino.name}')
+        from integrations.utils import salvar_print_debug
         download_dir = Path("logs/downloads").resolve()
         
         try:
@@ -1521,67 +1828,101 @@ class GoogleFlowAutomation:
             else:
                 download_dir.mkdir(parents=True, exist_ok=True)
 
-            # --- 2. CLIQUE NO BOTÃO PRINCIPAL 'BAIXAR' ---
-            _log("Procurando botão 'Baixar' (Alvo: sc-e8425ea6-0)...")
+            # 📸 Print de diagnóstico ANTES do download (para debug se falhar)
+            salvar_print_debug(self.driver, f"FLOW_ANTES_DOWNLOAD_{caminho_destino.stem}")
             
-            # XPath baseado no HTML real que você mandou (procura o ícone download + o span escondido)
-            xpath_baixar = "//button[contains(., 'download') or contains(., 'Baixar')]"
+            _log("Abrindo imagem pronta no centro da tela...")
+            card = None
+            if hasattr(self, 'ultimo_tile_id_gerado') and self.ultimo_tile_id_gerado:
+                try: card = self.driver.find_element(By.XPATH, f"//div[@data-tile-id='{self.ultimo_tile_id_gerado}']")
+                except: pass
             
-            btn_baixar = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_baixar)))
+            # Fallback se não achar pelo ID: pega o card mais recente (o primeiro da lista)
+            if not card: 
+                try:
+                    cards = self.driver.find_elements(By.XPATH, "//div[@data-tile-id]")
+                    if cards: card = cards[0]
+                except: pass
+                
+            if card:
+                try: js_click(self.driver, card)
+                except: pass
+            
+            time.sleep(2.5)
 
-            # 🚨 MUDANÇA VITAL: Clique físico real para o Radix disparar o Popper do menu
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn_baixar)
-            time.sleep(1.0)
-            try:
-                from selenium.webdriver.common.action_chains import ActionChains
-                ActionChains(self.driver).move_to_element(btn_baixar).click().perform()
-            except:
-                btn_baixar.click()
-            
-            _log("✔ Menu de resoluções aberto. Buscando opção 1K...")
-            time.sleep(2.5) # Tempo essencial para o menu flutuante renderizar no DOM
-
-            # --- 3. SELEÇÃO DA RESOLUÇÃO 1K NO MENU FLUTUANTE ---
-            # O menu flutuante do Radix usa role="menuitem". Vamos buscar o span '1K' dentro dele.
-            xpath_1k_real = "//button[@role='menuitem']//span[text()='1K']"
-            
-            clicou_1k = False
-            try:
-                # Tenta achar o botão que contém o span 1K
-                btn_1k = self.driver.find_element(By.XPATH, xpath_1k_real)
-                # Sobe para o pai (button) se necessário, ou clica no span mesmo (o Radix aceita)
-                self.driver.execute_script("arguments[0].click();", btn_1k)
-                clicou_1k = True
-                _log("✔ Opção '1K' clicada com sucesso via XPath Real!")
-            except:
-                _log("⚠️ XPath 1K falhou no menu flutuante. Tentando varredura JS total...")
-                # Fallback JS varrendo todos os menuitems abertos na tela
-                clicou_1k = self.driver.execute_script("""
-                    var itens = document.querySelectorAll('button[role="menuitem"], [data-radix-collection-item]');
-                    for (var i = 0; i < itens.length; i++) {
-                        if (itens[i].innerText.includes('1K')) {
-                            itens[i].click();
-                            return true;
-                        }
-                    }
-                    return false;
-                """)
-
-            if not clicou_1k:
-                # Último suspiro: clica no primeiro item do menu (que pelo seu HTML é o 1K)
-                _log("⚠️ Tentando clique cego no primeiro item do menu Radix...")
-                self.driver.execute_script("""
-                    var primeiro = document.querySelector('button[role="menuitem"]');
-                    if (primeiro) { primeiro.click(); return true; }
-                    return false;
-                """)
-
-            time.sleep(2.0)
-            self.resolver_permissoes_drive()
-            
-            # --- 4. MONITORAMENTO DO DOWNLOAD ---
-            _log(f'Monitorando surgimento de arquivo em: {download_dir}')
+            # =========================================================
+            # --- BUSCA DO BOTÃO BAIXAR (XPath direto, sem cache) ---
+            # =========================================================
             arquivo_final = None
+            max_tentativas_download = 2
+
+            for tentativa_dl in range(1, max_tentativas_download + 1):
+                _log(f"📥 Tentativa de download {tentativa_dl}/{max_tentativas_download}...")
+                
+                xpath_download = "//button[.//i[text()='download']]"
+                try:
+                    btn_baixar = WebDriverWait(self.driver, 30).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath_download))
+                    )
+                    
+                    try:
+                        btn_baixar.click()
+                    except:
+                        js_click(self.driver, btn_baixar)
+                        
+                    time.sleep(1.5)
+                    
+                    # Clica na opção 1K
+                    xpath_1k = "//button[@role='menuitem'][.//span[contains(.,'1K')]]"
+                    try:
+                        btn_1k = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_1k)))
+                        btn_1k.click()
+                    except TimeoutException:
+                        options = self.driver.find_elements(By.XPATH, "//button[@role='menuitem']")
+                        if options: js_click(self.driver, options[0])
+                        
+                except TimeoutException:
+                    _log("ERRO: Botão Baixar não habilitou a tempo na tela da imagem.")
+                    continue
+                
+                time.sleep(2.0)
+                self.resolver_permissoes_drive()
+                
+                # --- 🔍 VERIFICAÇÃO RÁPIDA: O download realmente iniciou? ---
+                # Se em 8s não apareceu nenhum arquivo (nem .crdownload), o clique foi em vão.
+                download_iniciou = False
+                fim_verificacao = time.time() + 8
+                while time.time() < fim_verificacao:
+                    todos = list(download_dir.glob("*"))
+                    if todos:
+                        download_iniciou = True
+                        break
+                    time.sleep(0.5)
+                
+                if download_iniciou:
+                    _log("✔ Download detectado na pasta! Aguardando conclusão...")
+                    break  # Sai para o monitoramento completo abaixo
+                else:
+                    _log(f"⚠️ Nenhum arquivo surgiu após clique (tentativa {tentativa_dl}). Cache pode estar envenenado.")
+                    salvar_print_debug(self.driver, f"FLOW_DOWNLOAD_FALHOU_T{tentativa_dl}_{caminho_destino.stem}")
+                    
+                    if tentativa_dl < max_tentativas_download:
+                        # 🧹 PURGA DO CACHE: Limpa seletores envenenados e tenta do zero
+                        _log("🧹 Limpando cache envenenado e retentando com seletores frescos...")
+                        from integrations.self_healing import limpar_memoria_chave
+                        for passo in passos_download:
+                            limpar_memoria_chave(passo["chave"], "FLOW_DOWNLOAD_IMG")
+                        
+                        # Fecha qualquer menu residual antes de retentar
+                        try:
+                            from selenium.webdriver.common.action_chains import ActionChains
+                            from selenium.webdriver.common.keys import Keys
+                            ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                            time.sleep(1.0)
+                        except: pass
+
+            # --- 4. MONITORAMENTO DO DOWNLOAD (espera o arquivo final) ---
+            _log(f'Monitorando surgimento de arquivo em: {download_dir}')
             fim_timeout = time.time() + 60 
             while time.time() < fim_timeout:
                 validos = [f for f in download_dir.glob("*") if not f.name.endswith(('.crdownload', '.tmp'))]
@@ -1614,7 +1955,6 @@ class GoogleFlowAutomation:
 
         except Exception as e:
             _log(f'🚨 Erro fatal no download 1K: {e}')
-            from integrations.utils import salvar_print_debug
             salvar_print_debug(self.driver, f"ERRO_DOWNLOAD_1K_{caminho_destino.stem}")
             raise
 
@@ -1723,13 +2063,70 @@ def _remover_emojis(texto: str) -> str:
     return padrao_emoji.sub(r'', texto)
 
 
-def ler_e_separar_cenas(caminho_txt: Path, num_roteiro: int = 1, qtd_cenas: int = 3, variante: str = "") -> list[str]:
-    """Lê do roteiros.txt unificado fatiando pelo marcador do roteiro solicitado."""
-    # Define o caminho do arquivo unificado na mesma pasta
-    unificado = caminho_txt.parent / "roteiros.txt"
+def sanitizar_prompt_policy(prompt: str) -> str:
+    """
+    Remove ou substitui palavras/frases que ativam o filtro de 'conteúdo sexual'
+    do Google Flow. Preserva a intenção criativa usando termos neutros.
+    """
+    # Substituições case-insensitive (original → neutro)
+    _substituicoes = [
+        # Cenário
+        (r'\bin the bedroom\b', 'in a modern interior'),
+        (r'\bbedroom\b', 'interior'),
+        (r'\bin bed\b', 'in a cozy setting'),
+        # Roupas íntimas / pijama com contexto corporal
+        (r'\blingerie\b', 'sleepwear'),
+        (r'\bpajama set\b', 'matching lounge outfit'),
+        (r'\bpijama\b', 'lounge outfit'),
+        (r'\bnightgown\b', 'lounge dress'),
+        (r'\brobe\b', 'lounge robe'),
+        # Expressões sensuais
+        (r'\balluring\b', 'confident'),
+        (r'\bseductive\b', 'confident'),
+        (r'\bsensual\b', 'elegant'),
+        (r'\bsensuality\b', 'elegance'),
+        (r'\bsensualidade\b', 'elegância'),
+        (r'\bsedoso\b', 'premium'),
+        (r'\bsedosa\b', 'premium'),
+        (r'\bsexy\b', 'stylish'),
+        (r'\bintimate\b', 'personal'),
+        (r'\bintimidade\b', 'conforto'),
+        (r'\bdesejo\b', 'estilo'),
+        (r'\bprovocante\b', 'sofisticada'),
+        (r'\bsensorial\b', 'premium'),
+        # Corpo
+        (r'\bcurves\b', 'silhouette'),
+        (r'\bbody-hugging\b', 'well-fitted'),
+        (r'\bbody\s*con\b', 'fitted'),
+        (r'\bcling(?:s|ing)?\s+to\s+(?:her|the)\s+body\b', 'drapes naturally'),
+        (r'\bagainst her body\b', 'on the fabric'),
+        (r'\bcleavage\b', 'neckline'),
+        (r'\bdecote\b', 'gola'),
+        # Autoestima em contexto íntimo
+        (r'\bautoestima\b', 'confiança'),
+        # V-neck em contexto de pijama pode ser gatilho
+        (r'\bdeep V-neck\b', 'V-neckline'),
+    ]
     
-    # Prioridade para o roteiros.txt, fallback para o arquivo individual (antigo)
-    arquivo_alvo = unificado if unificado.exists() else caminho_txt
+    resultado = prompt
+    for padrao, substituto in _substituicoes:
+        resultado = re.sub(padrao, substituto, resultado, flags=re.IGNORECASE)
+    
+    return resultado
+
+def ler_e_separar_cenas(caminho_txt: Path, num_roteiro: int = 1, qtd_cenas: int = 3, variante: str = "") -> list[str]:
+    """Lê do roteiros.txt (ou metadados.txt legado) fatiando pelo marcador do roteiro solicitado."""
+    # Define os caminhos possíveis na mesma pasta
+    roteiros = caminho_txt.parent / "roteiros.txt"
+    metadados = caminho_txt.parent / "metadados.txt"
+    
+    # Prioridade: roteiros.txt > metadados.txt (legado) > arquivo individual (antigo)
+    if roteiros.exists():
+        arquivo_alvo = roteiros
+    elif metadados.exists():
+        arquivo_alvo = metadados
+    else:
+        arquivo_alvo = caminho_txt
     
     if not arquivo_alvo.exists():
         _log(f"⚠️ Arquivo não encontrado: {arquivo_alvo}")
@@ -1738,28 +2135,30 @@ def ler_e_separar_cenas(caminho_txt: Path, num_roteiro: int = 1, qtd_cenas: int 
     conteudo = arquivo_alvo.read_text(encoding='utf-8')
     
     # --- LÓGICA DE FATIAMENTO DO ARQUIVO UNIFICADO ---
-    if unificado.exists():
-        # 🚨 A MUDANÇA ESTÁ AQUI: Aceita a tag com a variante
-        if variante:
-            tag_atual = f"=== ROTEIRO {num_roteiro}_{variante} ==="
-        else:
-            tag_atual = f"=== ROTEIRO {num_roteiro} ==="
-            
-        if tag_atual in conteudo:
-            # Pega o texto que começa após a tag do roteiro solicitado
-            bloco = conteudo.split(tag_atual)[1]
-            
-            # Corta antes do próximo === para não pegar outras coisas
-            if "\n===" in bloco:
-                bloco = bloco.split("\n===")[0]
-        else:
-            bloco = conteudo
+    # 🛡️ CORREÇÃO: Verifica se o CONTEÚDO tem o marcador, não se roteiros.txt existe.
+    # O metadados.txt TAMBÉM contém os blocos === ROTEIRO X_VARIANTE_Y ===
+    if variante:
+        tag_atual = f"=== ROTEIRO {num_roteiro}_{variante} ==="
+    else:
+        tag_atual = f"=== ROTEIRO {num_roteiro} ==="
+        
+    if tag_atual in conteudo:
+        # Pega o texto que começa após a tag do roteiro solicitado
+        bloco = conteudo.split(tag_atual)[1]
+        
+        # Corta antes do próximo === para não pegar outras coisas
+        if "\n===" in bloco:
+            bloco = bloco.split("\n===")[0]
     else:
         bloco = conteudo
         
-    # --- SUA LÓGICA DE LIMPEZA ORIGINAL (MANTIDA) ---
+    # --- LIMPEZA GERAL ---
     bloco = re.sub(r'<thinking>.*?</thinking>', '', bloco, flags=re.DOTALL)
     bloco = bloco.replace("Show thinking", "").replace("Gemini said", "").strip()
+    
+    # 🛡️ CORREÇÃO: Remove qualquer marcador === que tenha vazado para dentro do bloco
+    bloco = re.sub(r'===\s*VARIANTE\s*\d+\s*===', '', bloco)
+    bloco = re.sub(r'===\s*ROTEIRO\s*\d+[^=]*===', '', bloco)
     
     # Remove a parte da legenda do bloco para focar só nas cenas
     bloco = re.split(r'\[(?i:legenda).*?\]', bloco)[0].strip()

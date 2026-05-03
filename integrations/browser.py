@@ -210,7 +210,23 @@ def create_driver(settings: Settings, perfil_acessibilidade: bool = False):
 def close_driver(driver: webdriver.Chrome | None) -> None:
     if driver is None:
         return
+    
+    # 1. Tenta o caminho civilizado
+    pid = None
+    try:
+        pid = driver.service.process.pid
+    except:
+        pass
+    
     try:
         driver.quit()
     except Exception:
         pass
+    
+    # 2. Se temos o PID, garante a morte com taskkill /T (mata árvore)
+    if pid:
+        try:
+            import os
+            os.system(f"taskkill /f /pid {pid} /T >nul 2>&1")
+        except:
+            pass
