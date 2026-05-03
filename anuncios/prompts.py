@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from integrations.utils import _log
 
 load_dotenv(override=True)
-PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", "G:/Meu Drive/Prompts"))
+PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", "G:/Meu Drive/Config/Prompts"))
 
 
 # =============================================================================
