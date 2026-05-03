@@ -529,18 +529,17 @@ def formatar_dados_produto(dados_ia: dict) -> str:
     separador = "━" * 60
     header = "═" * 58
     
-    return f"""
-    {separador}
-    📦 DADOS DO PRODUTO
-    {separador}
-    NOME_REAL: {nome}
-    NOME_RESUMIDO: {resumido}
-    PRECO_E_CONDICOES: {preco}
-    BENEFICIOS_EXTRAS: {beneficios_inline}
+    return f"""{separador}
+📦 DADOS DO PRODUTO
+{separador}
+NOME_REAL: {nome}
+NOME_RESUMIDO: {resumido}
+PRECO_E_CONDICOES: {preco}
+BENEFICIOS_EXTRAS: {beneficios_inline}
 
-    Benefícios detalhados:
-    {beneficios_fmt}
-    """
+  Benefícios detalhados:
+{beneficios_fmt}
+"""
 
 
 def consolidar_metadados_final(pasta_task: Path) -> None:
@@ -566,7 +565,7 @@ def consolidar_metadados_final(pasta_task: Path) -> None:
         if "DADOS DO PRODUTO" in produto:
             partes.append(produto)
         else:
-            partes.append(f"{separador}\n📦DADOS DO PRODUTO\n{separador}\n{produto}")
+            partes.append(f"{separador}\n📦 DADOS DO PRODUTO\n{separador}\n\n{produto}")
     
     # =====================================================================
     # 2. 📝 LEGENDAS
@@ -575,7 +574,7 @@ def consolidar_metadados_final(pasta_task: Path) -> None:
     if legendas_path.exists():
         legendas = legendas_path.read_text(encoding='utf-8').strip()
         if legendas:
-            partes.append(f"\n\n{separador}\n📝 LEGENDAS\n{separador}\n{legendas}")
+            partes.append(f"\n\n{separador}\n📝 LEGENDAS\n{separador}\n\n{legendas}")
     
     # =====================================================================
     # 3. 🎬 ROTEIROS (Resultados do Diretor de Arte + Roteiros técnicos)
