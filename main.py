@@ -337,8 +337,8 @@ def main() -> None:
                             log_step("🛑 Tarefa abortada por rejeição de imagem. Movendo para 'concluido' como REPROVADO.")
                             
                             try:
-                                nome_prod_raw = task.dados_anuncio.get('nome_resumido') or task.dados_anuncio.get('nome_produto') or f"Produto_{id_original}"
-                                nome_prod_slug = re.sub(r'[^\w]', '', nome_prod_raw).title()
+                                nome_prod_raw = (task.dados_anuncio.get('nome_resumido') or task.dados_anuncio.get('nome_produto') or 'ProdutoGenerico').strip() or 'ProdutoGenerico'
+                                nome_prod_slug = re.sub(r'[^\w]', '', ''.join(p.capitalize() for p in re.split(r'[\s_\-]+', nome_prod_raw) if p))
                                 
                                 partes_origem = pasta_task.parts
                                 estilo_ref = re.sub(r'[^\w]', '', partes_origem[-2]) if len(partes_origem) >= 2 else "Estilo" 
@@ -376,8 +376,21 @@ def main() -> None:
                     # =========================================================================
                     # 🚀 DEFINIÇÃO DO DIRETÓRIO DE ENTREGA (SÓ CRIARÁ A PASTA NO FINAL)
                     # =========================================================================
-                    nome_resumido = task.dados_anuncio.get('nome_resumido', 'ProdutoGenerico')
-                    nome_prod_slug = re.sub(r'[^\w]', '', nome_resumido).title()
+                    nome_resumido = (
+                        task.dados_anuncio.get('nome_resumido') 
+                        or task.dados_anuncio.get('nome_produto') 
+                        or 'ProdutoGenerico'
+                    ).strip()
+                    if not nome_resumido:
+                        nome_resumido = 'ProdutoGenerico'
+                    # CamelCase: "kit cinto abdominal" → "KitCintoAbdominal"
+                    nome_prod_slug = ''.join(
+                        palavra.capitalize() 
+                        for palavra in re.split(r'[\s_\-]+', nome_resumido) 
+                        if palavra
+                    )
+                    # Remove caracteres especiais que sobrem
+                    nome_prod_slug = re.sub(r'[^\w]', '', nome_prod_slug)
                     
                     partes_origem = pasta_task.parts
                     estilo_ref = re.sub(r'[^\w]', '', partes_origem[-2]) if len(partes_origem) >= 2 else "Estilo" 
